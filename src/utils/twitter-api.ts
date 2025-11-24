@@ -4,14 +4,29 @@ import { getCachedUser, setCachedUser, type CachedUserInfo } from './cache';
 const BEARER_TOKEN = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
 
 // Request queue to throttle API calls
-const requestQueue: Array<() => Promise<void>> = [];
+const MAX_QUEUE_SIZE = 50; // Prevent unbounded queue growth
+const requestQueue: Array<{ fn: () => Promise<void>; reject: (reason?: unknown) => void }> = [];
 let isProcessingQueue = false;
 
 // Minimum delay between API requests (ms)
 const REQUEST_DELAY_MS = 500;
 
-// Track rate limit state
+// Rate limit state with exponential backoff
 let rateLimitedUntil = 0;
+let consecutiveRateLimits = 0;
+
+// Calculate backoff time with exponential increase (max 5 minutes)
+function getBackoffMs(): number {
+  const baseMs = 30000; // 30 seconds base
+  const maxMs = 5 * 60 * 1000; // 5 minutes max
+  const backoff = Math.min(baseMs * Math.pow(2, consecutiveRateLimits), maxMs);
+  return backoff;
+}
+
+// Reset backoff on successful request
+function resetBackoff(): void {
+  consecutiveRateLimits = 0;
+}
 
 async function processQueue(): Promise<void> {
   if (isProcessingQueue) return;
@@ -21,13 +36,17 @@ async function processQueue(): Promise<void> {
     // Check if we're rate limited
     if (Date.now() < rateLimitedUntil) {
       const waitTime = rateLimitedUntil - Date.now();
-      console.log(`[XSanctuary] Rate limited, waiting ${waitTime}ms`);
+      console.log(`[XSanctuary] Rate limited, waiting ${Math.round(waitTime / 1000)}s`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
 
     const request = requestQueue.shift();
     if (request) {
-      await request();
+      try {
+        await request.fn();
+      } catch (error) {
+        request.reject(error);
+      }
       await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY_MS));
     }
   }
@@ -37,13 +56,23 @@ async function processQueue(): Promise<void> {
 
 function queueRequest<T>(fn: () => Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
-    requestQueue.push(async () => {
-      try {
-        const result = await fn();
-        resolve(result);
-      } catch (error) {
-        reject(error);
-      }
+    // Reject if queue is full to prevent memory issues
+    if (requestQueue.length >= MAX_QUEUE_SIZE) {
+      console.warn('[XSanctuary] Request queue full, dropping request');
+      reject(new Error('Request queue full'));
+      return;
+    }
+
+    requestQueue.push({
+      fn: async () => {
+        try {
+          const result = await fn();
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      },
+      reject,
     });
     processQueue();
   });
@@ -78,9 +107,15 @@ async function twitterApiCall(endpoint: string, body: string): Promise<boolean> 
     });
 
     if (response.status === 429) {
-      // Rate limited - back off for 1 minute
-      rateLimitedUntil = Date.now() + 60000;
-      console.warn('[XSanctuary] Rate limited on action API');
+      // Rate limited - use exponential backoff
+      consecutiveRateLimits++;
+      rateLimitedUntil = Date.now() + getBackoffMs();
+      console.warn(`[XSanctuary] Rate limited on action API, backing off ${Math.round(getBackoffMs() / 1000)}s`);
+      return false;
+    }
+
+    if (response.ok) {
+      resetBackoff();
     }
 
     return response.ok;
@@ -168,9 +203,10 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
       });
 
       if (response.status === 429) {
-        // Rate limited - back off for 2 minutes
-        rateLimitedUntil = Date.now() + 120000;
-        console.warn(`[XSanctuary] Rate limited! Backing off until ${new Date(rateLimitedUntil).toLocaleTimeString()}`);
+        // Rate limited - use exponential backoff
+        consecutiveRateLimits++;
+        rateLimitedUntil = Date.now() + getBackoffMs();
+        console.warn(`[XSanctuary] Rate limited! Backing off ${Math.round(getBackoffMs() / 1000)}s`);
         return null;
       }
 
@@ -178,6 +214,9 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
         console.log(`[XSanctuary] API returned ${response.status} for @${screenName}`);
         return null;
       }
+
+      // Success - reset backoff counter
+      resetBackoff();
 
       const data = await response.json();
       const result = data?.data?.user_result_by_screen_name?.result;

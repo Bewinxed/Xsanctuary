@@ -8,6 +8,14 @@ import './style.css';
 // Pre-compiled regex for better performance
 const USERNAME_REGEX = /^\/([A-Za-z0-9_]+)(?:\/|$)/;
 
+// Reserved paths to skip (Set for O(1) lookup)
+const RESERVED_PATHS = new Set([
+  'home', 'explore', 'notifications', 'messages', 'bookmarks',
+  'lists', 'profile', 'settings', 'compose', 'search', 'i',
+  'intent', 'hashtag', 'tos', 'privacy', 'about', 'help',
+  'status', 'photo', 'video', 'followers', 'following', 'likes',
+]);
+
 // Detect Twitter's light/dark theme
 function detectTheme() {
   const bgColor = getComputedStyle(document.body).backgroundColor;
@@ -135,20 +143,14 @@ function processElement(element: Element) {
     const href = link.getAttribute('href');
     if (!href) continue;
 
-    // Extract screen name
-    const match = href.match(/^\/([A-Za-z0-9_]+)(?:\/|$)/);
+    // Extract screen name using pre-compiled regex
+    const match = href.match(USERNAME_REGEX);
     if (!match) continue;
 
     const screenName = match[1];
 
-    // Skip reserved paths
-    const reservedPaths = [
-      'home', 'explore', 'notifications', 'messages', 'bookmarks',
-      'lists', 'profile', 'settings', 'compose', 'search', 'i',
-      'intent', 'hashtag', 'tos', 'privacy', 'about', 'help',
-      'status', 'photo', 'video', 'followers', 'following', 'likes',
-    ];
-    if (reservedPaths.includes(screenName.toLowerCase())) continue;
+    // Skip reserved paths (using Set for O(1) lookup)
+    if (RESERVED_PATHS.has(screenName.toLowerCase())) continue;
 
     // Only process username links (those that show @username)
     const linkText = link.textContent?.trim() || '';
@@ -174,7 +176,7 @@ async function processTweet(tweet: Element) {
   const href = usernameLink.getAttribute('href');
   if (!href) return;
 
-  const match = href.match(/^\/([A-Za-z0-9_]+)(?:\/|$)/);
+  const match = href.match(USERNAME_REGEX);
   if (!match) return;
 
   const screenName = match[1];
@@ -337,12 +339,19 @@ async function getUserInfo(screenName: string): Promise<UserInfo | null> {
     return pendingRequests.get(cacheKey)!;
   }
 
-  // Fetch user info
-  const requestPromise = fetchUserInfo(screenName).then((info) => {
-    userInfoCache.set(cacheKey, info);
-    pendingRequests.delete(cacheKey);
-    return info;
-  });
+  // Fetch user info - use .finally() to ensure cleanup even on error
+  const requestPromise = fetchUserInfo(screenName)
+    .then((info) => {
+      userInfoCache.set(cacheKey, info);
+      return info;
+    })
+    .catch((error) => {
+      console.error(`[XSanctuary] Error fetching user info for @${screenName}:`, error);
+      return null;
+    })
+    .finally(() => {
+      pendingRequests.delete(cacheKey);
+    });
 
   pendingRequests.set(cacheKey, requestPromise);
   return requestPromise;

@@ -14,8 +14,10 @@ interface UserCache {
   [screenName: string]: CachedUserInfo;
 }
 
-// Cache TTL: 7 days (location doesn't change often)
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Cache configuration
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days TTL
+const MAX_USER_CACHE_SIZE = 2000; // Max users to cache
+const MAX_LLM_CACHE_SIZE = 500; // Max LLM responses to cache
 
 // Storage for user cache
 const userCacheStorage = storage.defineItem<UserCache>('local:userCache', {
@@ -57,6 +59,18 @@ export async function setCachedUser(info: CachedUserInfo): Promise<void> {
     ...info,
     cachedAt: Date.now(),
   };
+
+  // Evict oldest entries if over max size (LRU eviction)
+  const keys = Object.keys(memoryCache);
+  if (keys.length > MAX_USER_CACHE_SIZE) {
+    // Sort by cachedAt and remove oldest entries
+    const sortedKeys = keys.sort((a, b) => memoryCache[a].cachedAt - memoryCache[b].cachedAt);
+    const toRemove = sortedKeys.slice(0, keys.length - MAX_USER_CACHE_SIZE);
+    for (const removeKey of toRemove) {
+      delete memoryCache[removeKey];
+    }
+    console.log(`[XSanctuary] Evicted ${toRemove.length} old cache entries`);
+  }
 
   // Persist to storage (debounced)
   debouncedPersist();
@@ -179,6 +193,17 @@ export async function setCachedLlmResponse(cacheKey: string, result: string): Pr
     result,
     cachedAt: Date.now(),
   };
+
+  // Evict oldest entries if over max size (LRU eviction)
+  const keys = Object.keys(llmMemoryCache);
+  if (keys.length > MAX_LLM_CACHE_SIZE) {
+    const sortedKeys = keys.sort((a, b) => llmMemoryCache[a].cachedAt - llmMemoryCache[b].cachedAt);
+    const toRemove = sortedKeys.slice(0, keys.length - MAX_LLM_CACHE_SIZE);
+    for (const removeKey of toRemove) {
+      delete llmMemoryCache[removeKey];
+    }
+    console.log(`[XSanctuary] Evicted ${toRemove.length} old LLM cache entries`);
+  }
 
   // Persist (debounced)
   debouncedLlmPersist();
