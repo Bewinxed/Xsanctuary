@@ -2,7 +2,11 @@ import { getFlag, getCountryCode, isDeceptiveProfile, extractFlagEmojis, country
 import { getSettings, saveSettings, type CountryRule, type Settings } from '@/utils/storage';
 import { toUwuSpeak, toCatSpeak } from '@/utils/transforms';
 import { blockUser, muteUser, fetchUserInfo, type UserInfo } from '@/utils/twitter-api';
+import { LRUCache, BoundedSet } from '@/utils/lru-cache';
 import './style.css';
+
+// Pre-compiled regex for better performance
+const USERNAME_REGEX = /^\/([A-Za-z0-9_]+)(?:\/|$)/;
 
 // Detect Twitter's light/dark theme
 function detectTheme() {
@@ -13,17 +17,21 @@ function detectTheme() {
   document.documentElement.setAttribute('data-xsanctuary-theme', isDark ? 'dark' : 'light');
 }
 
-// Track processed elements to avoid duplicates
+// Track processed elements to avoid duplicates (WeakSet allows GC of removed elements)
 const processedUsernames = new WeakSet<Element>();
 const processedTweets = new WeakSet<Element>();
-// Cache for user info (screenName -> UserInfo)
-const userInfoCache = new Map<string, UserInfo | null>();
-// Track pending requests to avoid duplicate fetches
+
+// Bounded caches to prevent memory leaks
+const userInfoCache = new LRUCache<string, UserInfo | null>(500);
 const pendingRequests = new Map<string, Promise<UserInfo | null>>();
-// Track users we've already applied hard actions to
-const hardActionApplied = new Set<string>();
+const hardActionApplied = new BoundedSet<string>(1000);
+
 // Settings cache
 let cachedSettings: Settings | null = null;
+
+// Debounced mutation processing
+let pendingElements: Element[] = [];
+let processingScheduled = false;
 
 export default defineContentScript({
   matches: ['*://*.x.com/*', '*://*.twitter.com/*'],
@@ -41,28 +49,45 @@ export default defineContentScript({
     // Load settings
     cachedSettings = await getSettings();
 
-    // Listen for settings changes
-    browser.storage.onChanged.addListener((changes) => {
+    // Listen for settings changes (store reference for cleanup)
+    const storageListener = (changes: { [key: string]: { newValue?: unknown } }) => {
       if (changes.settings) {
-        cachedSettings = changes.settings.newValue;
+        cachedSettings = changes.settings.newValue as Settings;
         console.log('[XSanctuary] Settings updated');
       }
-    });
+    };
+    browser.storage.onChanged.addListener(storageListener);
 
     // Process existing elements after a short delay
     setTimeout(() => processPage(), 500);
 
-    // Set up mutation observer for dynamic content
+    // Debounced element processing function
+    function scheduleProcessing() {
+      if (processingScheduled || pendingElements.length === 0) return;
+      processingScheduled = true;
+
+      // Use requestIdleCallback if available, otherwise requestAnimationFrame
+      const schedule = window.requestIdleCallback || ((cb: () => void) => setTimeout(cb, 16));
+      schedule(() => {
+        const elements = pendingElements;
+        pendingElements = [];
+        processingScheduled = false;
+        elements.forEach(processElement);
+      });
+    }
+
+    // Set up mutation observer for dynamic content with debouncing
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.type === 'childList') {
           mutation.addedNodes.forEach((node) => {
             if (node instanceof Element) {
-              processElement(node);
+              pendingElements.push(node);
             }
           });
         }
       }
+      scheduleProcessing();
     });
 
     observer.observe(document.body, {
@@ -79,6 +104,11 @@ export default defineContentScript({
     // Cleanup on context invalidation
     ctx.onInvalidated(() => {
       observer.disconnect();
+      themeObserver.disconnect();
+      browser.storage.onChanged.removeListener(storageListener);
+      // Clear pending elements
+      pendingElements = [];
+      processingScheduled = false;
     });
   },
 });
