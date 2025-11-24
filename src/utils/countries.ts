@@ -279,24 +279,26 @@ const countryToCode: Record<string, string> = {
   'Asia Pacific App Store': 'APAC',
 };
 
-// Region codes to display text
-const regionToDisplay: Record<string, string> = {
-  'APAC': '🌏 APAC',
-  'EU': '🇪🇺 EU',
-  'LATAM': '🌎 LATAM',
-  'MENA': '🌍 MENA',
-  'NA': '🌎 NA',
-  'SA': '🌏 S.Asia',
-  'SSA': '🌍 Africa',
+// Region codes to display text and icon
+const regionToDisplay: Record<string, { name: string; icon: string }> = {
+  'APAC': { name: 'APAC', icon: '🌏' },
+  'EU': { name: 'EU', icon: '🇪🇺' },
+  'LATAM': { name: 'LATAM', icon: '🌎' },
+  'MENA': { name: 'MENA', icon: '🌍' },
+  'NA': { name: 'NA', icon: '🌎' },
+  'SA': { name: 'S.Asia', icon: '🌏' },
+  'SSA': { name: 'Africa', icon: '🌍' },
 };
 
-// Convert ISO country code to flag emoji
+// Get SVG flag URL from country code (using CDN for cross-platform compatibility)
+export function countryCodeToFlagUrl(code: string): string {
+  return `https://purecatamphetamine.github.io/country-flag-icons/3x2/${code.toUpperCase()}.svg`;
+}
+
+// Convert ISO country code to flag emoji (kept for backwards compatibility, but prefer countryCodeToFlagUrl)
 export function countryCodeToFlag(code: string): string {
-  const codePoints = code
-    .toUpperCase()
-    .split('')
-    .map((char) => 127397 + char.charCodeAt(0));
-  return String.fromCodePoint(...codePoints);
+  // Return URL instead for better cross-platform support
+  return countryCodeToFlagUrl(code);
 }
 
 // Get country code from country name
@@ -381,15 +383,24 @@ export function isDeceptiveProfile(profileText: string, actualCountryCode: strin
   return !hasMatchingFlag;
 }
 
-// Get flag emoji from country name
+// Get flag (URL for countries, emoji for regions) from country name
 export function getFlag(countryName: string): string | null {
   const code = getCountryCode(countryName);
   if (code) {
-    // Check if it's a region code
+    // Check if it's a region code - return emoji for regions
     if (regionToDisplay[code]) {
-      return regionToDisplay[code];
+      return regionToDisplay[code].icon;
     }
-    return countryCodeToFlag(code);
+    // Return SVG URL for countries
+    return countryCodeToFlagUrl(code);
   }
   return null;
+}
+
+// Get flag display info (used for UI rendering)
+export function getFlagInfo(countryCode: string): { type: 'emoji' | 'url'; value: string } | null {
+  if (regionToDisplay[countryCode]) {
+    return { type: 'emoji', value: regionToDisplay[countryCode].icon };
+  }
+  return { type: 'url', value: countryCodeToFlagUrl(countryCode) };
 }

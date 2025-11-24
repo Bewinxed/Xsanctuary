@@ -1,9 +1,19 @@
-import { getFlag, getCountryCode, isDeceptiveProfile, extractFlagEmojis, countryCodeToFlag } from '@/utils/countries';
+import { getFlag, getCountryCode, isDeceptiveProfile, extractFlagEmojis, countryCodeToFlag, countryCodeToFlagUrl } from '@/utils/countries';
 import { getSettings, saveSettings, type CountryRule, type Settings } from '@/utils/storage';
 import { toUwuSpeak, toCatSpeak } from '@/utils/transforms';
 import { blockUser, muteUser, fetchUserInfo, type UserInfo } from '@/utils/twitter-api';
 import { LRUCache, BoundedSet } from '@/utils/lru-cache';
 import './style.css';
+
+// Helper to render flag (emoji or SVG image)
+function renderFlag(flag: string, size: 'small' | 'medium' = 'medium'): string {
+  const isUrl = flag.startsWith('http://') || flag.startsWith('https://');
+  if (isUrl) {
+    const dimensions = size === 'small' ? 'width="16" height="12"' : 'width="20" height="15"';
+    return `<img src="${flag}" ${dimensions} style="display: inline-block; vertical-align: middle; object-fit: cover;" alt="flag" />`;
+  }
+  return flag;
+}
 
 // Pre-compiled regex for better performance
 const USERNAME_REGEX = /^\/([A-Za-z0-9_]+)(?:\/|$)/;
@@ -298,8 +308,13 @@ async function addFlagBadge(element: HTMLElement, screenName: string) {
     let indicators: string[] = [];
 
     if (isDeceptive) {
-      const claimedFlagEmojis = claimedFlags.map(code => countryCodeToFlag(code)).join('');
-      expandedContent = `${claimedFlagEmojis} → ${flag}`;
+      // Claimed flags from profile are always emojis, so keep using countryCodeToFlag for those
+      // But for the actual country, we need to render it properly (might be SVG)
+      const claimedFlagEmojis = claimedFlags.map(code => {
+        const codePoints = code.toUpperCase().split('').map(char => 127397 + char.charCodeAt(0));
+        return String.fromCodePoint(...codePoints);
+      }).join('');
+      expandedContent = `${claimedFlagEmojis} → ${renderFlag(flag, 'small')}`;
       indicators.push('Deceptive');
     }
 
@@ -310,7 +325,7 @@ async function addFlagBadge(element: HTMLElement, screenName: string) {
     const indicatorText = indicators.length > 0 ? ` (${indicators.join(', ')})` : '';
 
     // Update badge with flag and country name (expands on hover)
-    badge.innerHTML = `<span class="xsanctuary-badge-flag">${flag}</span><span class="xsanctuary-badge-country">${expandedContent}${indicatorText}</span>`;
+    badge.innerHTML = `<span class="xsanctuary-badge-flag">${renderFlag(flag, 'small')}</span><span class="xsanctuary-badge-country">${expandedContent}${indicatorText}</span>`;
     badge.title = `XSanctuary: ${userInfo.country}${indicatorText} (right-click for options)`;
 
     // Add context menu handler
@@ -596,7 +611,7 @@ function createBlurOverlay(tweet: HTMLElement, tweetText: HTMLElement, flag: str
           rule.pausedUntil = Date.now() + 60 * 60 * 1000;
           await saveSettings(settings);
           cachedSettings = settings;
-          showToast(`${flag} Paused for 1 hour`);
+          showToast(`${renderFlag(flag, 'small')} Paused for 1 hour`);
           // Re-evaluate all blurred content
           reEvaluateBlurredContent();
         }
@@ -608,7 +623,7 @@ function createBlurOverlay(tweet: HTMLElement, tweetText: HTMLElement, flag: str
           rule.excludedUsers.push(screenName.toLowerCase());
           await saveSettings(settings);
           cachedSettings = settings;
-          showToast(`${flag} @${screenName} excluded`);
+          showToast(`${renderFlag(flag, 'small')} @${screenName} excluded`);
           // Re-evaluate all blurred content
           reEvaluateBlurredContent();
         }
@@ -660,7 +675,7 @@ function reEvaluateBlurredContent() {
 function addTransformBadge(element: HTMLElement, emoji: string, flag: string) {
   const badge = document.createElement('span');
   badge.className = 'xsanctuary-transform-badge';
-  badge.textContent = ` ${flag} ${emoji}`;
+  badge.innerHTML = ` ${renderFlag(flag, 'small')} ${emoji}`;
   element.appendChild(badge);
 }
 
@@ -720,7 +735,7 @@ function showContextMenu(e: MouseEvent, userInfo: UserInfo) {
   const menu = document.createElement('div');
   menu.className = 'xsanctuary-context-menu';
   menu.innerHTML = `
-    <div class="xsanctuary-menu-header">${flag} ${userInfo.country}</div>
+    <div class="xsanctuary-menu-header">${renderFlag(flag, 'medium')} ${userInfo.country}</div>
     <div class="xsanctuary-menu-divider"></div>
     <button class="xsanctuary-menu-item" data-action="hide">
       <span>🙈</span> Hide content from this country
@@ -801,13 +816,14 @@ async function handleContextMenuAction(action: string, country: string, countryC
   cachedSettings = settings;
 
   // Show confirmation
-  showToast(`${getFlag(country)} Rule added for ${country}`);
+  const flag = getFlag(country) || '🏳️';
+  showToast(`${renderFlag(flag, 'small')} Rule added for ${country}`);
 }
 
 function showToast(message: string) {
   const toast = document.createElement('div');
   toast.className = 'xsanctuary-toast';
-  toast.textContent = message;
+  toast.innerHTML = message; // Use innerHTML to support flag images
   document.body.appendChild(toast);
 
   setTimeout(() => {
