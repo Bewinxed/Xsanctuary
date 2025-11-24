@@ -193,6 +193,11 @@
     return allLocations.find(c => c.code === code)?.flag || '🏳️';
   }
 
+  // Check if a flag string is a URL or emoji
+  function isFlagUrl(flag: string): boolean {
+    return flag.startsWith('http://') || flag.startsWith('https://');
+  }
+
   function selectCountry(location: Country) {
     selectedCountry = location;
     comboboxOpen = false;
@@ -262,7 +267,14 @@
         <Popover.Trigger>
           <Button variant="outline" class="flex-1 justify-between min-w-[280px]">
             {#if selectedCountry}
-              <span>{selectedCountry.flag} {selectedCountry.name}</span>
+              <span class="flex items-center gap-2">
+                {#if isFlagUrl(selectedCountry.flag)}
+                  <img src={selectedCountry.flag} alt={selectedCountry.name} class="w-4 h-3 object-cover" />
+                {:else}
+                  <span>{selectedCountry.flag}</span>
+                {/if}
+                {selectedCountry.name}
+              </span>
             {:else}
               <span class="text-muted-foreground">Search country or region...</span>
             {/if}
@@ -285,7 +297,12 @@
                       onclick={() => selectCountry(location)}
                     >
                       <Check class="h-4 w-4 {selectedCountry?.code === location.code ? 'opacity-100' : 'opacity-0'}" />
-                      {location.flag} {location.name}
+                      {#if isFlagUrl(location.flag)}
+                        <img src={location.flag} alt={location.name} class="w-4 h-3 object-cover inline-block" />
+                      {:else}
+                        <span>{location.flag}</span>
+                      {/if}
+                      {location.name}
                     </button>
                   {/each}
                 </Command.Group>
@@ -298,7 +315,12 @@
                       onclick={() => selectCountry(location)}
                     >
                       <Check class="h-4 w-4 {selectedCountry?.code === location.code ? 'opacity-100' : 'opacity-0'}" />
-                      {location.flag} {location.name}
+                      {#if isFlagUrl(location.flag)}
+                        <img src={location.flag} alt={location.name} class="w-4 h-3 object-cover inline-block" />
+                      {:else}
+                        <span>{location.flag}</span>
+                      {/if}
+                      {location.name}
                     </button>
                   {/each}
                 </Command.Group>
@@ -326,7 +348,11 @@
             <!-- Header -->
             <div class="flex items-center justify-between px-3 py-2 bg-muted/30">
               <div class="flex items-center gap-2">
-                <span class="text-base">{getCountryFlag(rule.countryCode)}</span>
+                {#if isFlagUrl(getCountryFlag(rule.countryCode))}
+                  <img src={getCountryFlag(rule.countryCode)} alt={rule.country} class="w-5 h-4 object-cover" />
+                {:else}
+                  <span class="text-base">{getCountryFlag(rule.countryCode)}</span>
+                {/if}
                 <span class="text-sm font-medium">{rule.country}</span>
               </div>
               <Button
