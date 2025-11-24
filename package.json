@@ -2,7 +2,7 @@
   "name": "xsanctuary",
   "description": "Show country flags for Twitter/X users based on their location",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "author": {
     "name": "Omar Al Matar",
@@ -54,5 +54,8 @@
     "typescript": "^5.9.2",
     "vaul-svelte": "^1.0.0-next.7",
     "wxt": "^0.20.6"
+  },
+  "dependencies": {
+    "country-flag-icons": "^1.6.4"
   }
 }
