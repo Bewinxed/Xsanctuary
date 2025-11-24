@@ -109,4 +109,106 @@ export async function getCacheStats(): Promise<{ total: number; valid: number }>
 export async function clearCache(): Promise<void> {
   memoryCache = {};
   await userCacheStorage.setValue({});
+  // Also clear LLM cache
+  llmMemoryCache = {};
+  await llmCacheStorage.setValue({});
+}
+
+// ============================================
+// LLM Response Cache
+// ============================================
+
+interface LlmCacheEntry {
+  result: string;
+  cachedAt: number;
+}
+
+interface LlmCache {
+  [hash: string]: LlmCacheEntry;
+}
+
+// Cache TTL for LLM responses: 24 hours
+const LLM_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+const llmCacheStorage = storage.defineItem<LlmCache>('local:llmCache', {
+  fallback: {},
+});
+
+let llmMemoryCache: LlmCache = {};
+let llmCacheLoaded = false;
+
+async function loadLlmCache(): Promise<void> {
+  if (llmCacheLoaded) return;
+  llmMemoryCache = await llmCacheStorage.getValue();
+  llmCacheLoaded = true;
+}
+
+// Simple hash function for cache keys
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return hash.toString(36);
+}
+
+export function getLlmCacheKey(text: string, prompt: string, model: string): string {
+  return hashString(`${model}:${prompt}:${text}`);
+}
+
+export async function getCachedLlmResponse(cacheKey: string): Promise<string | null> {
+  await loadLlmCache();
+
+  const cached = llmMemoryCache[cacheKey];
+  if (!cached) return null;
+
+  // Check if expired
+  if (Date.now() - cached.cachedAt > LLM_CACHE_TTL_MS) {
+    return null;
+  }
+
+  return cached.result;
+}
+
+export async function setCachedLlmResponse(cacheKey: string, result: string): Promise<void> {
+  await loadLlmCache();
+
+  llmMemoryCache[cacheKey] = {
+    result,
+    cachedAt: Date.now(),
+  };
+
+  // Persist (debounced)
+  debouncedLlmPersist();
+}
+
+let llmPersistTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function debouncedLlmPersist(): void {
+  if (llmPersistTimeout) {
+    clearTimeout(llmPersistTimeout);
+  }
+  llmPersistTimeout = setTimeout(async () => {
+    // Clean up expired entries before persisting
+    const now = Date.now();
+    for (const key of Object.keys(llmMemoryCache)) {
+      if (now - llmMemoryCache[key].cachedAt > LLM_CACHE_TTL_MS) {
+        delete llmMemoryCache[key];
+      }
+    }
+    await llmCacheStorage.setValue(llmMemoryCache);
+    llmPersistTimeout = null;
+  }, 2000);
+}
+
+export async function getLlmCacheStats(): Promise<{ total: number; valid: number }> {
+  await loadLlmCache();
+
+  const now = Date.now();
+  const entries = Object.values(llmMemoryCache);
+  const valid = entries.filter(e => now - e.cachedAt <= LLM_CACHE_TTL_MS).length;
+
+  return { total: entries.length, valid };
 }

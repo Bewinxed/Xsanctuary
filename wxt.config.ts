@@ -4,7 +4,7 @@ import { resolve } from 'path';
 
 export default defineConfig({
   srcDir: 'src',
-  modules: ['@wxt-dev/module-svelte'],
+  modules: ['@wxt-dev/module-svelte', '@wxt-dev/auto-icons'],
   alias: {
     $lib: resolve('src/lib'),
   },

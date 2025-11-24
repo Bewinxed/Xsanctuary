@@ -52,6 +52,7 @@ export async function toLlmTransform(
   text: string,
   apiKey: string,
   prompt: string,
+  model: string = 'x-ai/grok-3-fast:free',
   onChunk?: (chunk: string) => void
 ): Promise<string> {
   if (!apiKey) {
@@ -67,7 +68,7 @@ export async function toLlmTransform(
       'X-Title': 'XSanctuary',
     },
     body: JSON.stringify({
-      model: 'openai/gpt-3.5-turbo',
+      model,
       messages: [
         {
           role: 'system',
@@ -83,7 +84,9 @@ export async function toLlmTransform(
   });
 
   if (!response.ok) {
-    throw new Error(`OpenRouter API error: ${response.status}`);
+    const errorText = await response.text();
+    console.error('[XSanctuary] OpenRouter error response:', errorText);
+    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
   }
 
   const reader = response.body?.getReader();
@@ -93,17 +96,24 @@ export async function toLlmTransform(
 
   const decoder = new TextDecoder();
   let result = '';
+  let buffer = '';
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
 
-    const chunk = decoder.decode(value, { stream: true });
-    const lines = chunk.split('\n').filter(line => line.startsWith('data: '));
+    // Append to buffer and process complete lines
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+
+    // Keep the last incomplete line in buffer
+    buffer = lines.pop() || '';
 
     for (const line of lines) {
-      const data = line.slice(6);
-      if (data === '[DONE]') continue;
+      if (!line.startsWith('data: ')) continue;
+
+      const data = line.slice(6).trim();
+      if (data === '[DONE]' || !data) continue;
 
       try {
         const parsed = JSON.parse(data);
@@ -112,8 +122,26 @@ export async function toLlmTransform(
           result += content;
           onChunk?.(content);
         }
+      } catch (e) {
+        // Skip invalid JSON lines but log for debugging
+        console.debug('[XSanctuary] Skipping invalid SSE line:', data);
+      }
+    }
+  }
+
+  // Process any remaining buffer
+  if (buffer.startsWith('data: ')) {
+    const data = buffer.slice(6).trim();
+    if (data && data !== '[DONE]') {
+      try {
+        const parsed = JSON.parse(data);
+        const content = parsed.choices?.[0]?.delta?.content;
+        if (content) {
+          result += content;
+          onChunk?.(content);
+        }
       } catch {
-        // Skip invalid JSON lines
+        // Ignore final incomplete chunk
       }
     }
   }

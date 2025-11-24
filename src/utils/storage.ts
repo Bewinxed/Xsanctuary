@@ -11,12 +11,15 @@ export interface CountryRule {
   llmPrompt?: string;
   deceptionOnly?: boolean; // Only apply if user has flag emojis that don't match their actual country
   vpnOnly?: boolean; // Only apply if user is using VPN (location_accurate: false)
+  pausedUntil?: number; // Timestamp when pause expires
+  excludedUsers?: string[]; // List of screen names excluded from this rule
 }
 
 export interface Settings {
   rules: CountryRule[];
   openRouterApiKey: string;
   defaultLlmPrompt: string;
+  llmModel: string;
   enabled: boolean;
 }
 
@@ -24,6 +27,7 @@ const defaultSettings: Settings = {
   rules: [],
   openRouterApiKey: '',
   defaultLlmPrompt: 'Rewrite this text in a funny way while keeping the meaning:',
+  llmModel: 'x-ai/grok-3-fast:free',
   enabled: true,
 };
 
@@ -32,9 +36,30 @@ export const settingsStorage = storage.defineItem<Settings>('local:settings', {
   fallback: defaultSettings,
 });
 
+// Helper to convert object with numeric keys back to array
+function ensureArray<T>(value: T[] | Record<string, T> | undefined | null): T[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  // Convert object with numeric keys to array
+  if (typeof value === 'object') {
+    return Object.values(value);
+  }
+  return [];
+}
+
 // Helper functions
 export async function getSettings(): Promise<Settings> {
-  return await settingsStorage.getValue();
+  const stored = await settingsStorage.getValue();
+
+  // Merge with defaults to ensure all fields exist
+  // Note: Chrome storage can convert arrays to objects with numeric keys
+  const settings: Settings = {
+    ...defaultSettings,
+    ...stored,
+    rules: ensureArray(stored?.rules as CountryRule[] | Record<string, CountryRule>),
+  };
+
+  return settings;
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

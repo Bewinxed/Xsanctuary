@@ -20,6 +20,7 @@
     "@tailwindcss/vite": "^4.1.17",
     "@tanstack/table-core": "^8.20.5",
     "@tsconfig/svelte": "^5.0.5",
+    "@wxt-dev/auto-icons": "^1.1.0",
     "@wxt-dev/module-svelte": "^2.0.3",
     "autoprefixer": "^10.4.22",
     "bits-ui": "^2.14.4",
