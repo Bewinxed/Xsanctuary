@@ -11,10 +11,10 @@
   import { Separator } from '$lib/components/ui/separator';
   import * as Card from '$lib/components/ui/card';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import { getSettings, saveSettings, type Settings, type CountryRule, type SoftAction, type HardAction } from '@/utils/storage';
+  import { getSettings, saveSettings, type Settings, type CountryRule, type SoftAction, type HardAction, type Theme } from '@/utils/storage';
   import { allLocations, regions, type Country } from '@/utils/country-list';
   import { getCacheStats, clearCache } from '@/utils/cache';
-  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, Settings as SettingsIcon, ChevronDown, ExternalLink } from 'lucide-svelte';
+  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, Settings as SettingsIcon, ChevronDown, ExternalLink, Sun, Moon, Monitor } from 'lucide-svelte';
 
   let settings = $state<Settings>({
     rules: [],
@@ -22,6 +22,7 @@
     defaultLlmPrompt: 'Rewrite this text in a funny way:',
     llmModel: 'x-ai/grok-3-fast:free',
     enabled: true,
+    theme: 'system',
   });
 
   let selectedCountry = $state<Country | undefined>(undefined);
@@ -64,6 +65,35 @@
   onMount(async () => {
     settings = await getSettings();
     cacheStats = await getCacheStats();
+    applyTheme(settings.theme);
+  });
+
+  function applyTheme(theme: Theme) {
+    const root = document.documentElement;
+    if (theme === 'system') {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.classList.toggle('dark', prefersDark);
+    } else {
+      root.classList.toggle('dark', theme === 'dark');
+    }
+  }
+
+  function cycleTheme() {
+    const themes: Theme[] = ['light', 'dark', 'system'];
+    const currentIndex = themes.indexOf(settings.theme);
+    settings.theme = themes[(currentIndex + 1) % themes.length];
+    applyTheme(settings.theme);
+    save();
+  }
+
+  // Watch for system theme changes
+  $effect(() => {
+    if (settings.theme === 'system') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handler = (e: MediaQueryListEvent) => applyTheme('system');
+      mediaQuery.addEventListener('change', handler);
+      return () => mediaQuery.removeEventListener('change', handler);
+    }
   });
 
   async function save() {
@@ -192,18 +222,35 @@
       <Shield class="h-5 w-5 text-primary" />
       <span class="font-semibold">XSanctuary</span>
     </div>
-    <div class="flex items-center gap-2">
-      <Label for="enabled" class="text-xs text-muted-foreground">
-        {settings.enabled ? 'On' : 'Off'}
-      </Label>
-      <Switch
-        id="enabled"
-        checked={settings.enabled}
-        onCheckedChange={(checked) => {
-          settings.enabled = checked;
-          save();
-        }}
-      />
+    <div class="flex items-center gap-3">
+      <!-- Theme toggle -->
+      <button
+        onclick={cycleTheme}
+        class="p-1.5 rounded-md hover:bg-secondary transition-colors"
+        title={`Theme: ${settings.theme}`}
+      >
+        {#if settings.theme === 'light'}
+          <Sun class="h-4 w-4 text-muted-foreground" />
+        {:else if settings.theme === 'dark'}
+          <Moon class="h-4 w-4 text-muted-foreground" />
+        {:else}
+          <Monitor class="h-4 w-4 text-muted-foreground" />
+        {/if}
+      </button>
+      <!-- Enable/disable toggle -->
+      <div class="flex items-center gap-2">
+        <Label for="enabled" class="text-xs text-muted-foreground">
+          {settings.enabled ? 'On' : 'Off'}
+        </Label>
+        <Switch
+          id="enabled"
+          checked={settings.enabled}
+          onCheckedChange={(checked) => {
+            settings.enabled = checked;
+            save();
+          }}
+        />
+      </div>
     </div>
   </div>
 

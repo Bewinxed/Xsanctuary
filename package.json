@@ -4,15 +4,25 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "author": {
+    "name": "Omar Al Matar",
+    "email": "bewinxed@gmail.com",
+    "url": "https://bewinxed.com"
+  },
   "scripts": {
     "dev": "wxt",
     "dev:firefox": "wxt -b firefox",
     "build": "wxt build",
     "build:firefox": "wxt build -b firefox",
+    "build:all": "bun run build && bun run build:firefox",
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
+    "zip:all": "bun run zip && bun run zip:firefox",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "postinstall": "wxt prepare"
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "prepush": "bun run check && bun run build:all",
+    "postinstall": "wxt prepare",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "devDependencies": {
     "@internationalized/date": "^3.8.1",
