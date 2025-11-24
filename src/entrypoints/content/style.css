@@ -1,6 +1,6 @@
 /* XSanctuary Content Script Styles */
 
-/* Flag badge - rounded pill style */
+/* Flag badge - rounded pill style with expand on hover */
 .xsanctuary-badge {
   display: inline-flex;
   align-items: center;
@@ -15,9 +15,10 @@
   line-height: 1;
   vertical-align: middle;
   cursor: help;
-  transition: background-color 0.15s ease;
+  transition: all 0.25s ease;
   height: fit-content;
-  width: fit-content;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .xsanctuary-badge:hover {
@@ -28,6 +29,69 @@
   font-size: 14px;
   line-height: 1;
   flex-shrink: 0;
+}
+
+.xsanctuary-badge-country {
+  display: inline-block;
+  max-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(29, 155, 240, 1);
+  transition: all 0.25s ease;
+  opacity: 0;
+}
+
+.xsanctuary-badge:hover .xsanctuary-badge-country {
+  max-width: 150px;
+  margin-left: 4px;
+  opacity: 1;
+}
+
+/* VPN user indicator - dashed orange border */
+.xsanctuary-badge.xsanctuary-vpn {
+  border-style: dashed;
+  border-width: 1.5px;
+  border-color: rgba(249, 115, 22, 0.6);
+  background: rgba(249, 115, 22, 0.1);
+}
+
+.xsanctuary-badge.xsanctuary-vpn:hover {
+  background: rgba(249, 115, 22, 0.2);
+}
+
+.xsanctuary-badge.xsanctuary-vpn .xsanctuary-badge-country {
+  color: rgba(249, 115, 22, 1);
+}
+
+/* Deceptive user indicator - red/warning style */
+.xsanctuary-badge.xsanctuary-deceptive {
+  border-color: rgba(239, 68, 68, 0.6);
+  background: rgba(239, 68, 68, 0.15);
+  animation: xsanctuary-pulse 2s ease-in-out infinite;
+}
+
+.xsanctuary-badge.xsanctuary-deceptive:hover {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.xsanctuary-badge.xsanctuary-deceptive .xsanctuary-badge-country {
+  color: rgba(239, 68, 68, 1);
+}
+
+/* Both VPN and deceptive */
+.xsanctuary-badge.xsanctuary-vpn.xsanctuary-deceptive {
+  border-style: dashed;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(249, 115, 22, 0.15));
+}
+
+@keyframes xsanctuary-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+  }
 }
 
 /* Loading state */
@@ -51,58 +115,220 @@
   }
 }
 
-/* Blur overlay */
-.xsanctuary-blur-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+/* Blurred text - click to reveal */
+.xsanctuary-blurred {
+  transition: filter 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.xsanctuary-blurred:hover {
+  filter: blur(3px) !important;
+}
+
+/* Animated reveal - add this class to trigger animation */
+.xsanctuary-revealing {
+  animation: xsanctuary-reveal 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes xsanctuary-reveal {
+  0% {
+    filter: blur(4px);
+    opacity: 0.8;
+  }
+  50% {
+    filter: blur(2px);
+    opacity: 0.9;
+  }
+  100% {
+    filter: blur(0);
+    opacity: 1;
+  }
+}
+
+/* Header action buttons - match Twitter's native style */
+.xsanctuary-header-actions {
+  display: inline-flex;
+  align-items: center;
+}
+
+.xsanctuary-header-actions button {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(4px);
-  border-radius: 8px;
-  z-index: 10;
+  width: 34.75px;
+  height: 34.75px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: rgb(113, 118, 123);
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-.xsanctuary-blur-content {
+/* Tooltip - appended to body to avoid overflow issues */
+.xsanctuary-tooltip {
+  position: fixed;
+  z-index: 999999;
+  padding: 4px 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+  border-radius: 4px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  /* Dark theme (default) - matches Twitter */
+  background: #495a69;
+  color: #fff;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+}
+
+.xsanctuary-tooltip.visible {
+  opacity: 1;
+}
+
+/* Light theme tooltip */
+[data-xsanctuary-theme="light"] .xsanctuary-tooltip {
+  background: #667786;
+  color: #fff;
+}
+
+.xsanctuary-header-actions button:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+.xsanctuary-header-actions button:focus-visible {
+  outline: 2px solid rgb(29, 155, 240);
+  outline-offset: -2px;
+}
+
+/* Primary action (reveal) - highlighted in Twitter blue */
+.xsanctuary-header-actions button[data-action="reveal"] {
+  color: rgb(29, 155, 240);
+}
+
+.xsanctuary-header-actions button[data-action="reveal"]:hover {
+  background: rgba(29, 155, 240, 0.2);
+}
+
+/* Light theme */
+[data-xsanctuary-theme="light"] .xsanctuary-header-actions button {
+  color: rgb(83, 100, 113);
+}
+
+[data-xsanctuary-theme="light"] .xsanctuary-header-actions button:hover {
+  background: rgba(29, 155, 240, 0.1);
+  color: rgb(29, 155, 240);
+}
+
+[data-xsanctuary-theme="light"] .xsanctuary-header-actions button[data-action="reveal"] {
+  color: rgb(29, 155, 240);
+}
+
+/* LLM Transform animations */
+.xsanctuary-transforming {
+  position: relative;
+}
+
+/* Subtle shimmer effect - no border, just a gentle pulse */
+.xsanctuary-transforming::before {
+  content: '';
+  position: absolute;
+  inset: -2px -4px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.03), transparent);
+  animation: xsanctuary-shimmer 1.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+[data-xsanctuary-theme="light"] .xsanctuary-transforming::before {
+  background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.02), transparent);
+}
+
+@keyframes xsanctuary-shimmer {
+  0%, 100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Native X.com style placeholder */
+.xsanctuary-transform-placeholder {
   display: flex;
-  flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 16px;
-  background: rgba(0, 0, 0, 0.7);
-  border-radius: 12px;
-  text-align: center;
+  padding: 2px 0;
+  color: rgb(113, 118, 123);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  font-weight: 400;
 }
 
-.xsanctuary-blur-flag {
-  font-size: 32px;
+[data-xsanctuary-theme="light"] .xsanctuary-transform-placeholder {
+  color: rgb(83, 100, 113);
 }
 
-.xsanctuary-blur-text {
-  color: #fff;
-  font-size: 14px;
-  font-weight: 500;
+.xsanctuary-transform-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(113, 118, 123, 0.3);
+  border-top-color: rgb(113, 118, 123);
+  border-radius: 50%;
+  animation: xsanctuary-spin 0.8s linear infinite;
 }
 
-.xsanctuary-reveal-btn {
-  padding: 6px 16px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 9999px;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
+[data-xsanctuary-theme="light"] .xsanctuary-transform-spinner {
+  border-color: rgba(83, 100, 113, 0.3);
+  border-top-color: rgb(83, 100, 113);
 }
 
-.xsanctuary-reveal-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.3);
+.xsanctuary-fade-out {
+  animation: xsanctuary-fade-out 0.3s ease forwards;
+}
+
+.xsanctuary-fade-in {
+  animation: xsanctuary-fade-in 0.3s ease forwards;
+}
+
+.xsanctuary-stream-in {
+  animation: xsanctuary-stream-in 0.15s ease;
+}
+
+@keyframes xsanctuary-fade-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes xsanctuary-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes xsanctuary-stream-in {
+  from {
+    opacity: 0.5;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* Transform badge */
@@ -127,6 +353,43 @@
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  animation: xsanctuary-menu-in 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: top left;
+}
+
+@keyframes xsanctuary-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Light theme for context menu */
+[data-xsanctuary-theme="light"] .xsanctuary-context-menu {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+}
+
+[data-xsanctuary-theme="light"] .xsanctuary-menu-header {
+  color: #1a1a1a;
+  background: rgba(0, 0, 0, 0.03);
+}
+
+[data-xsanctuary-theme="light"] .xsanctuary-menu-divider {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-xsanctuary-theme="light"] .xsanctuary-menu-item {
+  color: #1a1a1a;
+}
+
+[data-xsanctuary-theme="light"] .xsanctuary-menu-item:hover {
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .xsanctuary-menu-header {
