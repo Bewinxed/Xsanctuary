@@ -101,12 +101,13 @@
   }
 
   function addRule() {
-    if (!selectedCountry) return;
-    if (settings.rules.some(r => r.countryCode === selectedCountry.code)) return;
+    const country = selectedCountry;
+    if (!country) return;
+    if (settings.rules.some(r => r.countryCode === country.code)) return;
 
     settings.rules = [...settings.rules, {
-      country: selectedCountry.name,
-      countryCode: selectedCountry.code,
+      country: country.name,
+      countryCode: country.code,
       softAction: 'blur',
       hardAction: 'none',
     }];
@@ -134,7 +135,7 @@
   }
 
   function openShowcase() {
-    browser.tabs.create({ url: browser.runtime.getURL('showcase.html') });
+    browser.tabs.create({ url: browser.runtime.getURL('/showcase.html') });
   }
 
   function updateApiKey(e: Event) {
