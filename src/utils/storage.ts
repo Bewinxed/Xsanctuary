@@ -9,6 +9,8 @@ export interface CountryRule {
   softAction: SoftAction;
   hardAction: HardAction;
   llmPrompt?: string;
+  deceptionOnly?: boolean; // Only apply if user has flag emojis that don't match their actual country
+  vpnOnly?: boolean; // Only apply if user is using VPN (location_accurate: false)
 }
 
 export interface Settings {

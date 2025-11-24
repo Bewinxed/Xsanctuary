@@ -3,7 +3,10 @@ import { storage } from 'wxt/utils/storage';
 export interface CachedUserInfo {
   userId: string;
   screenName: string;
+  name?: string;
+  bio?: string;
   country: string | null;
+  locationAccurate?: boolean;
   cachedAt: number;
 }
 

@@ -1,16 +1,19 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Button } from '$lib/components/ui/button';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
+  import * as Popover from '$lib/components/ui/popover';
+  import * as Command from '$lib/components/ui/command';
   import { Label } from '$lib/components/ui/label';
   import { Separator } from '$lib/components/ui/separator';
   import * as Card from '$lib/components/ui/card';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { getSettings, saveSettings, type Settings, type CountryRule, type SoftAction, type HardAction } from '@/utils/storage';
-  import { countries, type Country } from '@/utils/country-list';
+  import { allLocations, regions, type Country } from '@/utils/country-list';
   import { getCacheStats, clearCache } from '@/utils/cache';
-  import { Trash2, Plus, Shield, Database } from 'lucide-svelte';
+  import { Checkbox } from '$lib/components/ui/checkbox';
+  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, EyeOff, Wifi } from 'lucide-svelte';
 
   let settings = $state<Settings>({
     rules: [],
@@ -21,6 +24,8 @@
 
   let selectedCountry = $state<Country | undefined>(undefined);
   let cacheStats = $state({ total: 0, valid: 0 });
+  let comboboxOpen = $state(false);
+  let searchQuery = $state('');
 
   const softActions: { value: SoftAction; label: string }[] = [
     { value: 'none', label: 'None' },
@@ -65,7 +70,7 @@
     save();
   }
 
-  function updateRule(code: string, field: keyof CountryRule, value: string) {
+  function updateRule(code: string, field: keyof CountryRule, value: string | boolean) {
     settings.rules = settings.rules.map(r =>
       r.countryCode === code ? { ...r, [field]: value } : r
     );
@@ -78,8 +83,27 @@
   }
 
   function getCountryFlag(code: string): string {
-    return countries.find(c => c.code === code)?.flag || '🏳️';
+    return allLocations.find(c => c.code === code)?.flag || '🏳️';
   }
+
+  function selectCountry(location: Country) {
+    selectedCountry = location;
+    comboboxOpen = false;
+    searchQuery = '';
+  }
+
+  $effect(() => {
+    // Filter locations based on search
+  });
+
+  const filteredLocations = $derived(
+    searchQuery.trim() === ''
+      ? allLocations
+      : allLocations.filter(loc =>
+          loc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          loc.code.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+  );
 </script>
 
 <div class="w-[380px] bg-background text-foreground">
@@ -107,29 +131,55 @@
   <!-- Add Rule -->
   <div class="border-b p-3">
     <div class="flex gap-2">
-      <Select.Root
-        type="single"
-        onValueChange={(v) => {
-          selectedCountry = countries.find(c => c.code === v);
-        }}
-      >
-        <Select.Trigger class="flex-1">
-          {#if selectedCountry}
-            <span>{selectedCountry.flag} {selectedCountry.name}</span>
-          {:else}
-            <span class="text-muted-foreground">Select country...</span>
-          {/if}
-        </Select.Trigger>
-        <Select.Content class="max-h-[200px]">
-          <ScrollArea class="h-[200px]">
-            {#each countries as country}
-              <Select.Item value={country.code}>
-                {country.flag} {country.name}
-              </Select.Item>
-            {/each}
-          </ScrollArea>
-        </Select.Content>
-      </Select.Root>
+      <Popover.Root bind:open={comboboxOpen}>
+        <Popover.Trigger>
+          <Button variant="outline" class="flex-1 justify-between min-w-[280px]">
+            {#if selectedCountry}
+              <span>{selectedCountry.flag} {selectedCountry.name}</span>
+            {:else}
+              <span class="text-muted-foreground">Search country or region...</span>
+            {/if}
+            <ChevronsUpDown class="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </Popover.Trigger>
+        <Popover.Content class="w-[280px] p-0" align="start">
+          <Command.Root>
+            <Command.Input
+              placeholder="Search..."
+              bind:value={searchQuery}
+            />
+            <Command.List class="max-h-[200px] overflow-auto">
+              <Command.Empty>No location found.</Command.Empty>
+              {#if filteredLocations.some(l => l.isRegion)}
+                <Command.Group heading="Regions">
+                  {#each filteredLocations.filter(l => l.isRegion) as location}
+                    <Command.Item
+                      value={location.code}
+                      onSelect={() => selectCountry(location)}
+                    >
+                      <Check class="mr-2 h-4 w-4 {selectedCountry?.code === location.code ? 'opacity-100' : 'opacity-0'}" />
+                      {location.flag} {location.name}
+                    </Command.Item>
+                  {/each}
+                </Command.Group>
+              {/if}
+              {#if filteredLocations.some(l => !l.isRegion)}
+                <Command.Group heading="Countries">
+                  {#each filteredLocations.filter(l => !l.isRegion) as location}
+                    <Command.Item
+                      value={location.code}
+                      onSelect={() => selectCountry(location)}
+                    >
+                      <Check class="mr-2 h-4 w-4 {selectedCountry?.code === location.code ? 'opacity-100' : 'opacity-0'}" />
+                      {location.flag} {location.name}
+                    </Command.Item>
+                  {/each}
+                </Command.Group>
+              {/if}
+            </Command.List>
+          </Command.Root>
+        </Popover.Content>
+      </Popover.Root>
       <Button size="sm" onclick={addRule} disabled={!selectedCountry}>
         <Plus class="h-4 w-4" />
       </Button>
@@ -194,6 +244,25 @@
                   </Select.Content>
                 </Select.Root>
               </div>
+            </div>
+            <!-- Filters -->
+            <div class="mt-2 flex flex-wrap gap-3 text-xs">
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <Checkbox
+                  checked={rule.deceptionOnly ?? false}
+                  onCheckedChange={(checked) => updateRule(rule.countryCode, 'deceptionOnly', checked)}
+                />
+                <EyeOff class="h-3 w-3 text-muted-foreground" />
+                <span class="text-muted-foreground">Deception only</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <Checkbox
+                  checked={rule.vpnOnly ?? false}
+                  onCheckedChange={(checked) => updateRule(rule.countryCode, 'vpnOnly', checked)}
+                />
+                <Wifi class="h-3 w-3 text-muted-foreground" />
+                <span class="text-muted-foreground">VPN only</span>
+              </label>
             </div>
           </div>
         {/each}

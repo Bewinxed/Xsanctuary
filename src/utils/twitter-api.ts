@@ -115,7 +115,9 @@ export interface UserInfo {
   userId: string;
   screenName: string;
   name?: string;
+  bio?: string;
   country: string | null;
+  locationAccurate?: boolean; // false = likely using VPN
 }
 
 export async function fetchUserInfo(screenName: string): Promise<UserInfo | null> {
@@ -126,7 +128,10 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
     return {
       userId: cached.userId,
       screenName: cached.screenName,
+      name: cached.name,
+      bio: cached.bio,
       country: cached.country,
+      locationAccurate: cached.locationAccurate,
     };
   }
 
@@ -185,14 +190,19 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
         userId: result.rest_id,
         screenName: result.core?.screen_name || screenName,
         name: result.core?.name || '',
+        bio: result.core?.description || '',
         country: result.about_profile?.account_based_in || null,
+        locationAccurate: result.about_profile?.location_accurate ?? true,
       };
 
       // Cache the result
       await setCachedUser({
         userId: userInfo.userId,
         screenName: userInfo.screenName,
+        name: userInfo.name,
+        bio: userInfo.bio,
         country: userInfo.country,
+        locationAccurate: userInfo.locationAccurate,
         cachedAt: Date.now(),
       });
 
