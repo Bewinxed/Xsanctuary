@@ -333,6 +333,54 @@ export function getCountryCode(countryName: string): string | null {
   return null;
 }
 
+// Extract all flag emojis from text and return their country codes
+export function extractFlagEmojis(text: string): string[] {
+  const flagCodes: string[] = [];
+
+  // Flag emojis are made of two regional indicator symbols (U+1F1E6 to U+1F1FF)
+  // Each letter A-Z maps to U+1F1E6 to U+1F1FF (regional indicator symbols)
+  const regionalIndicatorStart = 0x1F1E6; // 🇦
+  const regionalIndicatorEnd = 0x1F1FF;   // 🇿
+
+  const codePoints = [...text];
+
+  for (let i = 0; i < codePoints.length - 1; i++) {
+    const cp1 = codePoints[i].codePointAt(0);
+    const cp2 = codePoints[i + 1].codePointAt(0);
+
+    if (cp1 && cp2 &&
+        cp1 >= regionalIndicatorStart && cp1 <= regionalIndicatorEnd &&
+        cp2 >= regionalIndicatorStart && cp2 <= regionalIndicatorEnd) {
+      // Convert regional indicators back to letters
+      const letter1 = String.fromCharCode(cp1 - regionalIndicatorStart + 65); // 65 = 'A'
+      const letter2 = String.fromCharCode(cp2 - regionalIndicatorStart + 65);
+      const code = letter1 + letter2;
+      flagCodes.push(code);
+      i++; // Skip the next character as we've consumed it
+    }
+  }
+
+  return flagCodes;
+}
+
+// Check if user is being deceptive (has flag emojis but none match their actual country)
+export function isDeceptiveProfile(profileText: string, actualCountryCode: string): boolean {
+  const flagsInProfile = extractFlagEmojis(profileText);
+
+  // If no flags in profile, not considered deceptive
+  if (flagsInProfile.length === 0) {
+    return false;
+  }
+
+  // Check if any flag matches the actual country
+  const hasMatchingFlag = flagsInProfile.some(
+    flag => flag.toUpperCase() === actualCountryCode.toUpperCase()
+  );
+
+  // Deceptive if they have flags but none match their actual country
+  return !hasMatchingFlag;
+}
+
 // Get flag emoji from country name
 export function getFlag(countryName: string): string | null {
   const code = getCountryCode(countryName);

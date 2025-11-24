@@ -3,6 +3,7 @@ export interface Country {
   name: string;
   code: string;
   flag: string;
+  isRegion?: boolean;
 }
 
 function codeToFlag(code: string): string {
@@ -12,6 +13,17 @@ function codeToFlag(code: string): string {
     .map((char) => 127397 + char.charCodeAt(0));
   return String.fromCodePoint(...codePoints);
 }
+
+// Regions that Twitter may return instead of specific countries
+export const regions: Country[] = [
+  { name: 'Asia Pacific', code: 'APAC', flag: '🌏', isRegion: true },
+  { name: 'Europe', code: 'EU', flag: '🇪🇺', isRegion: true },
+  { name: 'Latin America', code: 'LATAM', flag: '🌎', isRegion: true },
+  { name: 'Middle East & North Africa', code: 'MENA', flag: '🌍', isRegion: true },
+  { name: 'North America', code: 'NA', flag: '🌎', isRegion: true },
+  { name: 'South Asia', code: 'SA', flag: '🌏', isRegion: true },
+  { name: 'Sub-Saharan Africa', code: 'SSA', flag: '🌍', isRegion: true },
+];
 
 export const countries: Country[] = [
   { name: 'Afghanistan', code: 'AF', flag: codeToFlag('AF') },
@@ -84,6 +96,9 @@ export const countries: Country[] = [
   { name: 'Yemen', code: 'YE', flag: codeToFlag('YE') },
 ].sort((a, b) => a.name.localeCompare(b.name));
 
+// Combined list with regions first, then countries
+export const allLocations: Country[] = [...regions, ...countries];
+
 export function getCountryByCode(code: string): Country | undefined {
-  return countries.find(c => c.code === code);
+  return allLocations.find(c => c.code === code);
 }

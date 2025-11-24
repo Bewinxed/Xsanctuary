@@ -1,4 +1,4 @@
-import { getFlag, getCountryCode } from '@/utils/countries';
+import { getFlag, getCountryCode, isDeceptiveProfile } from '@/utils/countries';
 import { getSettings, saveSettings, type CountryRule, type Settings } from '@/utils/storage';
 import { toUwuSpeak, toCatSpeak, toLlmTransform } from '@/utils/transforms';
 import { blockUser, muteUser, fetchUserInfo, type UserInfo } from '@/utils/twitter-api';
@@ -144,6 +144,25 @@ async function processTweet(tweet: Element) {
   // Get rule for this country
   const rule = cachedSettings?.rules.find(r => r.countryCode === countryCode);
   if (!rule) return;
+
+  // Check deception filter
+  if (rule.deceptionOnly) {
+    const profileText = `${userInfo.name || ''} ${userInfo.bio || ''}`;
+    if (!isDeceptiveProfile(profileText, countryCode)) {
+      // User is not being deceptive (either no flags or has matching flag)
+      return;
+    }
+    console.log(`[XSanctuary] Deception detected for @${screenName}: claims different country in profile`);
+  }
+
+  // Check VPN filter
+  if (rule.vpnOnly) {
+    if (userInfo.locationAccurate !== false) {
+      // User is not using VPN (location is accurate)
+      return;
+    }
+    console.log(`[XSanctuary] VPN detected for @${screenName}: location not accurate`);
+  }
 
   // Apply hard action (only once per user)
   if (rule.hardAction !== 'none' && !hardActionApplied.has(screenName.toLowerCase())) {
