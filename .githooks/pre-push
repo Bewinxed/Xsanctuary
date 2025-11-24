@@ -1,0 +1,30 @@
+#!/bin/sh
+
+echo "🔍 Running pre-push checks..."
+
+# Run type checking
+echo "📝 Type checking..."
+bun run check
+if [ $? -ne 0 ]; then
+  echo "❌ Type check failed. Push aborted."
+  exit 1
+fi
+
+# Build Chrome extension
+echo "🏗️  Building Chrome extension..."
+bun run build
+if [ $? -ne 0 ]; then
+  echo "❌ Chrome build failed. Push aborted."
+  exit 1
+fi
+
+# Build Firefox extension
+echo "🏗️  Building Firefox extension..."
+bun run build:firefox
+if [ $? -ne 0 ]; then
+  echo "❌ Firefox build failed. Push aborted."
+  exit 1
+fi
+
+echo "✅ All checks passed. Pushing..."
+exit 0

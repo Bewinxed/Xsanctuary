@@ -15,12 +15,15 @@ export interface CountryRule {
   excludedUsers?: string[]; // List of screen names excluded from this rule
 }
 
+export type Theme = 'light' | 'dark' | 'system';
+
 export interface Settings {
   rules: CountryRule[];
   openRouterApiKey: string;
   defaultLlmPrompt: string;
   llmModel: string;
   enabled: boolean;
+  theme: Theme;
 }
 
 const defaultSettings: Settings = {
@@ -29,6 +32,7 @@ const defaultSettings: Settings = {
   defaultLlmPrompt: 'Rewrite this text in a funny way while keeping the meaning:',
   llmModel: 'x-ai/grok-3-fast:free',
   enabled: true,
+  theme: 'system',
 };
 
 // Storage items
