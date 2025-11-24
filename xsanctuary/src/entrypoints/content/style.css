@@ -1,0 +1,217 @@
+/* XSanctuary Content Script Styles */
+
+/* Flag badge - rounded pill style */
+.xsanctuary-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-left: 4px;
+  padding: 2px 6px;
+  background: rgba(29, 155, 240, 0.1);
+  border: 1px solid rgba(29, 155, 240, 0.3);
+  border-radius: 9999px;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: help;
+  transition: background-color 0.15s ease;
+  height: fit-content;
+  width: fit-content;
+}
+
+.xsanctuary-badge:hover {
+  background: rgba(29, 155, 240, 0.2);
+}
+
+.xsanctuary-badge-flag {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* Loading state */
+.xsanctuary-badge.xsanctuary-loading {
+  padding: 4px 8px;
+}
+
+.xsanctuary-badge-loader {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(29, 155, 240, 0.3);
+  border-top-color: rgba(29, 155, 240, 0.8);
+  border-radius: 50%;
+  animation: xsanctuary-spin 0.8s linear infinite;
+}
+
+@keyframes xsanctuary-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Blur overlay */
+.xsanctuary-blur-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(4px);
+  border-radius: 8px;
+  z-index: 10;
+}
+
+.xsanctuary-blur-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.xsanctuary-blur-flag {
+  font-size: 32px;
+}
+
+.xsanctuary-blur-text {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.xsanctuary-reveal-btn {
+  padding: 6px 16px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.xsanctuary-reveal-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* Transform badge */
+.xsanctuary-transform-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 6px;
+  background: rgba(29, 155, 240, 0.1);
+  border-radius: 4px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* Context menu */
+.xsanctuary-context-menu {
+  position: fixed;
+  z-index: 999999;
+  min-width: 220px;
+  background: #15202b;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.xsanctuary-menu-header {
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.xsanctuary-menu-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.xsanctuary-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: #e7e9ea;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.xsanctuary-menu-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.xsanctuary-menu-item span {
+  font-size: 16px;
+}
+
+.xsanctuary-menu-item-danger {
+  color: #f4212e;
+}
+
+.xsanctuary-menu-item-danger:hover {
+  background: rgba(244, 33, 46, 0.1);
+}
+
+/* Toast notification */
+.xsanctuary-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999999;
+  padding: 12px 24px;
+  background: #1d9bf0;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 9999px;
+  box-shadow: 0 4px 12px rgba(29, 155, 240, 0.4);
+  animation: xsanctuary-toast-in 0.3s ease;
+}
+
+.xsanctuary-toast-hide {
+  animation: xsanctuary-toast-out 0.3s ease forwards;
+}
+
+@keyframes xsanctuary-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes xsanctuary-toast-out {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+}
