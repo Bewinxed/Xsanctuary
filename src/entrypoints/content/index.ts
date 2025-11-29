@@ -1156,79 +1156,146 @@ async function processImagesInTweet(tweet: Element) {
 function checkForLightboxImage() {
   if (!cachedSettings?.comicTranslation?.enabled) return;
 
-  // Look for lightbox image in various containers
-  const selectors = [
-    '[data-testid="swipe-to-dismiss"] img[src*="twimg.com/media"]',
-    '[aria-label="Image"] img[src*="twimg.com/media"]',
-    '#layers img[src*="twimg.com/media"]',
-  ];
+  // Find the VISIBLE lightbox image
+  // Twitter's carousel uses transform: translate3d() to position images
+  // Only one image is visible at a time (others are translated off-screen)
+  const visibleImage = findVisibleLightboxImage();
 
-  for (const selector of selectors) {
-    const img = document.querySelector(selector) as HTMLImageElement;
-    if (img && !processedImages.has(img)) {
-      console.log('[XSanctuary] Found lightbox image via URL check:', img.src);
-      processImageForLightbox(img);
-      return;
-    }
+  if (visibleImage && !processedImages.has(visibleImage)) {
+    console.log('[XSanctuary] Found visible lightbox image:', visibleImage.src);
+    processImageForLightbox(visibleImage);
+    return;
   }
 
-  console.log('[XSanctuary] No lightbox image found yet, will retry...');
-  // Retry a few times as the image might not be loaded yet
+  console.log('[XSanctuary] No visible lightbox image found yet, will retry...');
+  // Retry as the image might not be loaded yet
   setTimeout(() => {
-    for (const selector of selectors) {
-      const img = document.querySelector(selector) as HTMLImageElement;
-      if (img && !processedImages.has(img)) {
-        console.log('[XSanctuary] Found lightbox image via retry:', img.src);
-        processImageForLightbox(img);
-        return;
-      }
+    const img = findVisibleLightboxImage();
+    if (img && !processedImages.has(img)) {
+      console.log('[XSanctuary] Found visible lightbox image via retry:', img.src);
+      processImageForLightbox(img);
     }
   }, 500);
 }
 
+// Find the currently visible image in the lightbox carousel
+function findVisibleLightboxImage(): HTMLImageElement | null {
+  // Get all media images in the lightbox
+  const allImages = document.querySelectorAll(
+    '#layers img[src*="twimg.com/media"]'
+  ) as NodeListOf<HTMLImageElement>;
+
+  if (allImages.length === 0) return null;
+
+  // If only one image, return it
+  if (allImages.length === 1) {
+    const img = allImages[0];
+    if (img.clientWidth > 100 && img.clientHeight > 100) {
+      return img;
+    }
+    return null;
+  }
+
+  // For carousels, find the image that is actually visible on screen
+  // Twitter positions carousel items using transform: translate3d()
+  // The visible image is centered in the viewport
+  const viewportCenter = window.innerWidth / 2;
+
+  let bestMatch: HTMLImageElement | null = null;
+  let bestDistance = Infinity;
+
+  for (const img of allImages) {
+    // Skip placeholder/loading images
+    if (img.clientWidth < 100 || img.clientHeight < 100) continue;
+    if (img.src.includes('data:image/svg')) continue;
+
+    // Get the image's position on screen
+    const rect = img.getBoundingClientRect();
+    const imgCenter = rect.left + rect.width / 2;
+    const distance = Math.abs(imgCenter - viewportCenter);
+
+    // The visible image should be closest to the viewport center
+    // and actually within the viewport
+    if (rect.left < window.innerWidth && rect.right > 0 && distance < bestDistance) {
+      bestDistance = distance;
+      bestMatch = img;
+    }
+  }
+
+  // Only return if the image is reasonably centered (within 100px of center)
+  if (bestMatch && bestDistance < 200) {
+    console.log('[XSanctuary] Selected visible image, distance from center:', bestDistance);
+    return bestMatch;
+  }
+
+  // Fallback: return the first valid image
+  for (const img of allImages) {
+    if (img.clientWidth > 100 && img.clientHeight > 100 && !img.src.includes('data:image/svg')) {
+      return img;
+    }
+  }
+
+  return null;
+}
+
 // Also watch for lightbox/media viewer
+// Debounce lightbox check to prevent multiple rapid calls
+let lightboxCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+let lightboxCheckInProgress = false;
+
 function setupLightboxObserver() {
   // Twitter's lightbox can appear in #layers or as a swipe-to-dismiss element
+  // IMPORTANT: We only trigger a SINGLE debounced check when mutations occur.
+  // The actual image selection is done by checkForLightboxImage() based on URL.
+  // This prevents processing ALL carousel images and breaking the carousel.
   const observer = new MutationObserver((mutations) => {
+    // Check if any mutations look like lightbox-related changes
+    let hasLightboxMutation = false;
+
     for (const mutation of mutations) {
-      mutation.addedNodes.forEach((node) => {
+      for (const node of mutation.addedNodes) {
         if (node instanceof Element) {
-          // Look for lightbox images - check multiple selectors
-          // Lightbox uses swipe-to-dismiss container or aria-label="Image"
-          const lightboxContainers = node.querySelectorAll(
-            '[data-testid="swipe-to-dismiss"], [aria-label="Image"]'
-          );
-
-          // Also check if the node itself is a lightbox container
-          if (node.matches('[data-testid="swipe-to-dismiss"], [aria-label="Image"]')) {
-            const img = node.querySelector('img[src*="twimg.com/media"]') as HTMLImageElement;
-            if (img && !processedImages.has(img)) {
-              console.log('[XSanctuary] Found lightbox image (direct match):', img.src);
-              processImageForLightbox(img);
-            }
+          // Look for lightbox indicators, but DON'T process images directly
+          if (
+            node.matches('[data-testid="swipe-to-dismiss"], [aria-label="Image"]') ||
+            node.querySelector('[data-testid="swipe-to-dismiss"], [aria-label="Image"]') ||
+            (node.querySelector('img[src*="twimg.com/media"]') && node.closest('#layers'))
+          ) {
+            hasLightboxMutation = true;
+            break;
           }
-
-          lightboxContainers.forEach((container) => {
-            const img = container.querySelector('img[src*="twimg.com/media"]') as HTMLImageElement;
-            if (img && !processedImages.has(img)) {
-              console.log('[XSanctuary] Found lightbox image:', img.src);
-              processImageForLightbox(img);
-            }
-          });
-
-          // Fallback: check for any media image in the added node
-          const allMediaImgs = node.querySelectorAll('img[src*="twimg.com/media"]');
-          allMediaImgs.forEach((img) => {
-            const imgEl = img as HTMLImageElement;
-            // Only process if it looks like a lightbox (large image, in layers)
-            if (!processedImages.has(imgEl) && imgEl.closest('#layers')) {
-              console.log('[XSanctuary] Found lightbox image (fallback):', imgEl.src);
-              processImageForLightbox(imgEl);
-            }
-          });
         }
-      });
+      }
+      if (hasLightboxMutation) break;
     }
+
+    if (!hasLightboxMutation) return;
+
+    // Debounce: only trigger check once after mutations settle
+    if (lightboxCheckTimeout) {
+      clearTimeout(lightboxCheckTimeout);
+    }
+
+    lightboxCheckTimeout = setTimeout(() => {
+      lightboxCheckTimeout = null;
+
+      // Prevent concurrent checks
+      if (lightboxCheckInProgress) {
+        console.log('[XSanctuary] Lightbox check already in progress, skipping');
+        return;
+      }
+
+      // Only check if we're on a photo URL
+      if (window.location.pathname.includes('/photo/')) {
+        console.log('[XSanctuary] Lightbox mutation detected, triggering URL-based check');
+        lightboxCheckInProgress = true;
+        checkForLightboxImage();
+        // Reset flag after a delay to allow for carousel navigation
+        setTimeout(() => {
+          lightboxCheckInProgress = false;
+        }, 1000);
+      }
+    }, 200); // 200ms debounce
   });
 
   // Observe both #layers and document.body for lightbox detection
@@ -1253,34 +1320,37 @@ function processImageForLightbox(img: HTMLImageElement) {
     const resizeObserver = new ResizeObserver(() => {
       if (img.clientWidth >= 150 && img.clientHeight >= 150) {
         resizeObserver.disconnect();
-        applyLightboxTranslation(img);
+        // Wait for carousel to stabilize before processing
+        setTimeout(() => applyLightboxTranslation(img), 300);
       }
     });
     resizeObserver.observe(img);
     return;
   }
 
-  applyLightboxTranslation(img);
+  // Wait for carousel to stabilize before processing
+  setTimeout(() => applyLightboxTranslation(img), 300);
 }
 
 function applyLightboxTranslation(img: HTMLImageElement) {
+  // Double-check image is still valid and visible
+  if (!img.isConnected || img.clientWidth < 100 || img.clientHeight < 100) {
+    return;
+  }
+
   processedImages.add(img);
 
   // Normalize URL for cache lookup (Twitter uses different size params for inline vs lightbox)
   const normalizedUrl = normalizeTwitterImageUrl(img.src);
-  console.log('[XSanctuary] Applying lightbox translation, normalized URL:', normalizedUrl);
-  console.log('[XSanctuary] Cache has', imageDetectionCache.size, 'entries');
 
   // Check if we already have detection results cached for this image URL
   const cachedResult = imageDetectionCache.get(normalizedUrl);
 
   if (cachedResult && cachedResult.bubbles.length > 0) {
-    // Auto-apply the overlays since we already translated this image
-    console.log('[XSanctuary] Applying cached translation to lightbox, bubbles:', cachedResult.bubbles.length);
+    console.log('[XSanctuary] Lightbox: Applying cached overlays for', normalizedUrl.split('/').pop());
     addBubbleOverlaysToLightbox(img, normalizedUrl, cachedResult);
   } else {
-    // No cached results - add translate button
-    console.log('[XSanctuary] No cached results, adding translate button');
+    // No cached results - add translate button for user to trigger detection
     addLightboxTranslateButton(img);
   }
 }
@@ -1293,21 +1363,37 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
     return;
   }
 
+  // Safety check: don't process if image has collapsed or is invalid
+  if (img.clientWidth < 50 || img.clientHeight < 50) {
+    console.warn('[XSanctuary] Lightbox: Image too small, skipping overlay');
+    return;
+  }
+
   console.log('[XSanctuary] Lightbox: Adding overlays to container:', container.className);
   console.log('[XSanctuary] Lightbox: Image dimensions:', img.clientWidth, 'x', img.clientHeight);
+  console.log('[XSanctuary] Lightbox: Container position:', getComputedStyle(container).position);
 
-  // Ensure container has relative positioning
-  if (getComputedStyle(container).position === 'static') {
-    container.style.position = 'relative';
-    console.log('[XSanctuary] Lightbox: Set container position to relative');
-  }
+  // DON'T modify the container's position - it breaks Twitter's carousel layout!
+  // Twitter's lightbox containers already use absolute positioning
 
   // Remove any existing overlays
   container.querySelectorAll('.xsanctuary-bubble-container').forEach((el) => el.remove());
 
-  // Create overlay container
+  // Create overlay container - position it to match the image exactly
   const overlayContainer = document.createElement('div');
   overlayContainer.className = 'xsanctuary-bubble-container xsanctuary-lightbox-overlay';
+
+  // Use absolute positioning to cover the image, matching Twitter's existing structure
+  overlayContainer.style.cssText = `
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 100;
+    overflow: visible;
+  `;
 
   // Create hover zones for each bubble
   for (const bubble of detectionResult.bubbles) {
@@ -1384,14 +1470,15 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
   container.appendChild(overlayContainer);
 }
 
+// Lightweight translate button for lightbox (doesn't modify container)
 function addLightboxTranslateButton(img: HTMLImageElement) {
   const container = img.parentElement;
   if (!container || container.querySelector('.xsanctuary-translate-btn')) return;
 
   const btn = document.createElement('button');
   btn.className = 'xsanctuary-translate-btn xsanctuary-lightbox-btn';
-  btn.innerHTML = '<span>🌐 Translate</span>';
-  btn.title = 'Detect & translate speech bubbles';
+  btn.innerHTML = '🌐';
+  btn.title = 'Translate speech bubbles';
 
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -1401,18 +1488,27 @@ function addLightboxTranslateButton(img: HTMLImageElement) {
     btn.innerHTML = '<span class="xsanctuary-spinner"></span>';
 
     try {
-      await detectAndProcessComic(img, img.src);
-      btn.style.display = 'none';
+      const result = await detectAndProcessComic(img, img.src);
+      if (result && result.bubbles.length > 0) {
+        // Apply overlays to lightbox
+        const normalizedUrl = normalizeTwitterImageUrl(img.src);
+        addBubbleOverlaysToLightbox(img, normalizedUrl, result);
+        btn.remove();
+      } else {
+        btn.innerHTML = '∅';
+        btn.title = 'No speech bubbles found';
+        btn.classList.remove('loading');
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('[XSanctuary] Lightbox detection failed:', errorMessage);
-      btn.innerHTML = '<span>❌</span>';
+      btn.innerHTML = '❌';
       btn.title = `Detection failed: ${errorMessage}`;
       btn.classList.remove('loading');
     }
   });
 
-  container.style.position = 'relative';
+  // Don't modify container position - just append the button
   container.appendChild(btn);
 }
 
