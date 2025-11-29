@@ -1,5 +1,7 @@
 /* XSanctuary Content Script Styles */
 
+/* Note: Anime Ace font is loaded dynamically in index.ts via chrome.runtime.getURL */
+
 /* Flag badge - rounded pill style with expand on hover */
 .xsanctuary-badge {
   display: inline-flex;
@@ -523,39 +525,58 @@
   font-size: 14px;
 }
 
-/* Tweet-level translate button (in actions bar) */
-.xsanctuary-tweet-translate-btn {
+/* Image-level translate button (top-right of each image) */
+.xsanctuary-image-translate-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px;
-  height: 36px;
-  padding: 0 8px;
-  margin-left: 4px;
-  background: transparent;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: none;
   border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
   font-size: 16px;
   cursor: pointer;
-  transition: all 0.15s ease;
-  color: rgb(113, 118, 123);
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+  opacity: 0;
 }
 
-.xsanctuary-tweet-translate-btn:hover {
-  background: rgba(29, 155, 240, 0.1);
-  color: rgb(29, 155, 240);
+/* Show on hover over the image container */
+div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
+  opacity: 1;
 }
 
-.xsanctuary-tweet-translate-btn.loading {
+/* Always show when loading or has result */
+.xsanctuary-image-translate-btn.loading,
+.xsanctuary-image-translate-btn.success {
+  opacity: 1;
+}
+
+.xsanctuary-image-translate-btn:hover {
+  background: rgba(29, 155, 240, 0.9);
+  transform: scale(1.1);
+}
+
+.xsanctuary-image-translate-btn.loading {
   pointer-events: none;
+  background: rgba(29, 155, 240, 0.7);
 }
 
-.xsanctuary-tweet-translate-btn .xsanctuary-spinner {
-  width: 14px;
-  height: 14px;
+.xsanctuary-image-translate-btn.success {
+  background: rgba(34, 197, 94, 0.8);
+}
+
+.xsanctuary-image-translate-btn .xsanctuary-spinner {
+  width: 16px;
+  height: 16px;
   border-width: 2px;
-  border-color: rgba(29, 155, 240, 0.3);
-  border-top-color: rgb(29, 155, 240);
 }
 
 /* Toggle button for translated images */
@@ -605,6 +626,8 @@
   height: 100%;
   pointer-events: none;
   z-index: 5;
+  /* Allow translations to expand beyond image bounds */
+  overflow: visible;
 }
 
 /* Lightbox overlay needs higher z-index */
@@ -619,6 +642,10 @@
   /* Subtle indicator - dashed border that appears on idle */
   border: 2px dashed transparent;
   animation: xsanctuary-bubble-hint 3s ease-in-out infinite;
+  /* Enable container queries for child text scaling */
+  container-type: size;
+  /* Allow child translation to expand beyond bounds */
+  overflow: visible;
 }
 
 /* Hint animation - subtle pulse to indicate interactivity */
@@ -655,30 +682,47 @@
   }
 }
 
-/* Translation text inside bubble */
+/* Translation text inside bubble - MANGA TRANSLATOR STYLE */
 .xsanctuary-bubble-translation {
   opacity: 0;
+  /* Fill the parent overlay completely */
   width: 100%;
   height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+  /* Layout - center text */
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 6px;
-  box-sizing: border-box;
+  /* Default colors - will be overridden dynamically by LLM response */
   background: white;
-  /* Manga-style font */
-  font-family: "Comic Sans MS", "Chalkboard SE", "Comic Neue", "Bangers", cursive, sans-serif;
-  font-weight: 700;
   color: #000;
-  font-size: clamp(9px, 2vw, 16px);
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  word-wrap: break-word;
+  /* Bubble stroke/border - visible outline like manga bubbles */
+  border: 2px solid #000;
+  /* Manga-style font - Anime Ace is the industry standard */
+  font-family: "Anime Ace", "Comic Sans MS", "Chalkboard SE", cursive, sans-serif;
+  font-weight: 400;
+  /* Font scales with container size */
+  font-size: clamp(10px, 4cqmin, 18px);
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  /* Text wrapping */
+  word-break: break-word;
   overflow-wrap: break-word;
   hyphens: auto;
-  /* Text styling for manga feel */
-  text-transform: uppercase;
+  /* No clipping - bubble can extend beyond bbox if needed */
+  overflow: visible;
+  /* Default ellipse shape - JS will override with maskPath or borderRadius */
+  border-radius: 50%;
+}
+
+/* Fallback for browsers without container query support */
+@supports not (font-size: 1cqmin) {
+  .xsanctuary-bubble-translation {
+    font-size: clamp(10px, 2vw, 18px);
+  }
 }
 
 /* Loading state */

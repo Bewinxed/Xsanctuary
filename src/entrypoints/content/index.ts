@@ -35,6 +35,168 @@ const RESERVED_PATHS = new Set([
   'status', 'photo', 'video', 'followers', 'following', 'likes',
 ]);
 
+/**
+ * Parse a CSS polygon() string into an array of {x, y} points (normalized 0-1)
+ */
+function parsePolygon(polygonStr: string): { x: number; y: number }[] {
+  const points: { x: number; y: number }[] = [];
+  // Match polygon(x% y%, x% y%, ...)
+  const match = polygonStr.match(/polygon\(([^)]+)\)/);
+  if (!match) return points;
+
+  const pairs = match[1].split(',');
+  for (const pair of pairs) {
+    const coords = pair.trim().split(/\s+/);
+    if (coords.length >= 2) {
+      const x = parseFloat(coords[0]) / 100; // Convert % to 0-1
+      const y = parseFloat(coords[1]) / 100;
+      if (!isNaN(x) && !isNaN(y)) {
+        points.push({ x, y });
+      }
+    }
+  }
+  return points;
+}
+
+/**
+ * Find the horizontal bounds (left and right X) of a polygon at a given Y
+ * Uses scanline algorithm to find edge intersections
+ */
+function getPolygonBoundsAtY(points: { x: number; y: number }[], normalizedY: number): { left: number; right: number } | null {
+  if (points.length < 3) return null;
+
+  const intersections: number[] = [];
+
+  // Check each edge of the polygon
+  for (let i = 0; i < points.length; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % points.length];
+
+    // Check if this edge crosses the Y level
+    if ((p1.y <= normalizedY && p2.y > normalizedY) || (p2.y <= normalizedY && p1.y > normalizedY)) {
+      // Calculate X intersection using linear interpolation
+      const t = (normalizedY - p1.y) / (p2.y - p1.y);
+      const x = p1.x + t * (p2.x - p1.x);
+      intersections.push(x);
+    }
+  }
+
+  if (intersections.length < 2) return null;
+
+  // Sort and return leftmost and rightmost
+  intersections.sort((a, b) => a - b);
+  return {
+    left: intersections[0],
+    right: intersections[intersections.length - 1]
+  };
+}
+
+/**
+ * Get the width available at a given Y position
+ * Uses polygon if provided, otherwise falls back to ellipse
+ */
+function getShapeWidthAtY(normalizedY: number, polygonPoints: { x: number; y: number }[] | null): { left: number; width: number } {
+  // Try polygon first
+  if (polygonPoints && polygonPoints.length >= 3) {
+    const bounds = getPolygonBoundsAtY(polygonPoints, normalizedY);
+    if (bounds) {
+      return {
+        left: bounds.left,
+        width: bounds.right - bounds.left
+      };
+    }
+  }
+
+  // Fallback to ellipse
+  const y = normalizedY - 0.5;
+  const halfWidth = Math.sqrt(Math.max(0, 0.25 - y * y));
+  return {
+    left: 0.5 - halfWidth,
+    width: halfWidth * 2
+  };
+}
+
+/**
+ * Fit text to bubble by laying out lines that respect the shape (polygon or ellipse)
+ * Each line is sized and positioned to fit within the shape at that Y position
+ */
+function fitTextToBubble(element: HTMLElement, maskPath?: string) {
+  const parent = element.parentElement;
+  if (!parent) return;
+
+  const containerWidth = parent.offsetWidth;
+  const containerHeight = parent.offsetHeight;
+
+  if (containerWidth === 0 || containerHeight === 0) return;
+
+  const text = element.textContent || '';
+  if (!text.trim()) return;
+
+  // Parse polygon if provided
+  const polygonPoints = maskPath ? parsePolygon(maskPath) : null;
+
+  // Clear existing content
+  element.textContent = '';
+  element.style.display = 'flex';
+  element.style.flexDirection = 'column';
+  element.style.alignItems = 'center';
+  element.style.justifyContent = 'center';
+  element.style.padding = '0';
+
+  // Calculate optimal font size based on area
+  const usableArea = containerWidth * containerHeight * 0.5;
+  const charCount = text.length;
+  let fontSize = Math.sqrt(usableArea / (charCount * 0.9));
+  fontSize = Math.max(9, Math.min(fontSize, 26));
+
+  // Split into words
+  const words = text.split(/\s+/);
+  const lineHeight = fontSize * 1.15;
+
+  // Estimate number of lines that fit
+  const maxLines = Math.floor((containerHeight * 0.75) / lineHeight);
+  const targetLines = Math.max(1, Math.min(maxLines, Math.ceil(words.length / 3)));
+
+  // Distribute words across lines
+  const lines: string[] = [];
+  const wordsPerLine = Math.ceil(words.length / targetLines);
+  for (let i = 0; i < words.length; i += wordsPerLine) {
+    lines.push(words.slice(i, i + wordsPerLine).join(' '));
+  }
+
+  // Create line elements
+  const totalTextHeight = lines.length * lineHeight;
+  const startY = (containerHeight - totalTextHeight) / 2;
+
+  lines.forEach((line, index) => {
+    const lineEl = document.createElement('div');
+    lineEl.style.textAlign = 'center';
+    lineEl.style.whiteSpace = 'nowrap';
+    lineEl.style.overflow = 'visible';
+    lineEl.style.lineHeight = `${lineHeight}px`;
+    lineEl.style.fontSize = `${fontSize}px`;
+
+    // Calculate Y position of this line (normalized 0-1)
+    const lineY = startY + (index + 0.5) * lineHeight;
+    const normalizedY = lineY / containerHeight;
+
+    // Get available width at this Y position
+    const shape = getShapeWidthAtY(normalizedY, polygonPoints);
+    const availableWidth = containerWidth * shape.width * 0.9;
+
+    // Measure text and scale if needed
+    lineEl.textContent = line;
+    element.appendChild(lineEl);
+
+    // Adjust font size for this line if it's too wide
+    const textWidth = lineEl.scrollWidth;
+    if (textWidth > availableWidth && availableWidth > 0) {
+      const scale = availableWidth / textWidth;
+      lineEl.style.fontSize = `${fontSize * scale}px`;
+    }
+  });
+}
+
 // Detect Twitter's light/dark theme
 function detectTheme() {
   const bgColor = getComputedStyle(document.body).backgroundColor;
@@ -84,6 +246,16 @@ export default defineContentScript({
 
   async main(ctx) {
     console.log('[XSanctuary] Content script loaded');
+
+    // Load Anime Ace font for manga translations
+    const fontUrl = browser.runtime.getURL('fonts/animeace.ttf');
+    const fontFace = new FontFace('Anime Ace', `url(${fontUrl})`);
+    fontFace.load().then((loadedFont) => {
+      document.fonts.add(loadedFont);
+      console.log('[XSanctuary] Anime Ace font loaded');
+    }).catch((err) => {
+      console.warn('[XSanctuary] Failed to load Anime Ace font:', err);
+    });
 
     // Detect and track Twitter's theme
     detectTheme();
@@ -911,27 +1083,72 @@ function hideTooltip() {
 
 // Process images in tweets for comic detection
 async function processImagesInTweet(tweet: Element) {
-  if (!cachedSettings?.comicTranslation.enabled) {
+  console.log('[XSanctuary Comic] processImagesInTweet called, settings:', {
+    comicEnabled: cachedSettings?.comicTranslation?.enabled,
+    hasApiKey: !!cachedSettings?.openRouterApiKey,
+  });
+
+  if (!cachedSettings?.comicTranslation?.enabled) {
+    console.log('[XSanctuary Comic] Comic translation is disabled in settings');
     return;
   }
   if (!cachedSettings?.openRouterApiKey) {
-    console.log('[XSanctuary] Comic translation skipped: No API key');
+    console.log('[XSanctuary Comic] Comic translation skipped: No API key');
     return;
   }
 
+  // Get the main tweet's status ID from the tweet article's permalink
+  // The main tweet's permalink is typically in a time element's parent link
+  const tweetPermalink = tweet.querySelector('a[href*="/status/"] time')?.closest('a');
+  const mainTweetStatusMatch = tweetPermalink?.getAttribute('href')?.match(/\/status\/(\d+)/);
+  const mainTweetStatusId = mainTweetStatusMatch?.[1];
+
+  console.log('[XSanctuary Comic] Main tweet status ID:', mainTweetStatusId);
+
   // Find images in the tweet - only target actual media images, not profile pics
   // tweetPhoto is the container for tweet images/media
-  const images = tweet.querySelectorAll(
+  const allImages = tweet.querySelectorAll(
     'div[data-testid="tweetPhoto"] img, ' +
     'img[src*="twimg.com/media"]'
   );
 
+  // Filter out images that are inside quoted tweets (nested tweet structures)
+  const images = Array.from(allImages).filter((img) => {
+    // Check if this image is inside a card wrapper (quoted tweet card)
+    const cardWrapper = img.closest('[data-testid="card.wrapper"]');
+    if (cardWrapper) {
+      console.log('[XSanctuary Comic] Excluding image in card.wrapper');
+      return false;
+    }
+
+    // Get the image's parent link to check status ID
+    const imageLink = img.closest('a[href*="/status/"]');
+    if (!imageLink) {
+      // Image not in a status link - include it
+      return true;
+    }
+
+    const imageLinkHref = imageLink.getAttribute('href') || '';
+    const imageStatusMatch = imageLinkHref.match(/\/status\/(\d+)/);
+    const imageStatusId = imageStatusMatch?.[1];
+
+    // If we have a main tweet status ID, only include images from the same tweet
+    if (mainTweetStatusId && imageStatusId) {
+      if (imageStatusId !== mainTweetStatusId) {
+        console.log('[XSanctuary Comic] Excluding image from different status:', imageStatusId, 'vs main:', mainTweetStatusId);
+        return false;
+      }
+    }
+
+    return true;
+  }) as HTMLImageElement[];
+
   if (images.length === 0) return;
 
-  console.log(`[XSanctuary] Found ${images.length} images in tweet`);
+  console.log(`[XSanctuary] Found ${images.length} main tweet images (filtered from ${allImages.length})`);
 
   // Add a single translate button to the tweet (not per-image)
-  addTweetTranslateButton(tweet, Array.from(images) as HTMLImageElement[]);
+  addTweetTranslateButton(tweet, images);
 }
 
 // Check for lightbox image when navigating to photo URL
@@ -1096,10 +1313,11 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
     const overlay = document.createElement('div');
     overlay.className = 'xsanctuary-bubble-overlay xsanctuary-bubble-fetched'; // Already fetched
 
-    const left = (bubble.x - bubble.width / 2) * 100;
-    const top = (bubble.y - bubble.height / 2) * 100;
-    const width = bubble.width * 100;
-    const height = bubble.height * 100;
+    // Use exact bbox coordinates from YOLO (no padding)
+    const left = (bubble.bbox.x1 / detectionResult.imageWidth) * 100;
+    const top = (bubble.bbox.y1 / detectionResult.imageHeight) * 100;
+    const width = ((bubble.bbox.x2 - bubble.bbox.x1) / detectionResult.imageWidth) * 100;
+    const height = ((bubble.bbox.y2 - bubble.bbox.y1) / detectionResult.imageHeight) * 100;
 
     const translationEl = document.createElement('div');
     translationEl.className = 'xsanctuary-bubble-translation';
@@ -1109,7 +1327,21 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
     const cachedTranslation = bubbleTranslationCache.get(cacheKey);
 
     if (cachedTranslation) {
-      translationEl.textContent = cachedTranslation;
+      // Parse cached data (may include colors)
+      try {
+        const parsed = JSON.parse(cachedTranslation);
+        translationEl.textContent = parsed.text || cachedTranslation;
+        if (parsed.textColor) {
+          translationEl.style.color = parsed.textColor;
+          translationEl.style.borderColor = parsed.textColor;
+        }
+        if (parsed.bgColor) translationEl.style.backgroundColor = parsed.bgColor;
+      } catch {
+        translationEl.textContent = cachedTranslation;
+      }
+      // Defer text fitting until element is in DOM (pass maskPath for shape-aware layout)
+      const maskPathForFit = bubble.maskPath;
+      requestAnimationFrame(() => fitTextToBubble(translationEl, maskPathForFit));
     } else {
       translationEl.innerHTML = '<span class="xsanctuary-bubble-loading">...</span>';
     }
@@ -1122,19 +1354,10 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
       height: ${height}%;
       pointer-events: auto;
       cursor: pointer;
-      transition: all 0.2s ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
     `;
 
-    if (bubble.maskPath) {
-      overlay.style.clipPath = bubble.maskPath;
-      translationEl.style.clipPath = bubble.maskPath;
-    } else {
-      overlay.style.borderRadius = '50%';
-    }
+    // Use ellipse border-radius but text will flow according to actual mask shape
+    translationEl.style.borderRadius = '50%';
 
     overlay.appendChild(translationEl);
 
@@ -1210,19 +1433,31 @@ async function clearTranslationCaches() {
 // Expose to window for debugging
 (window as any).xsanctuaryClearCache = clearTranslationCaches;
 
-// Add a single translate button to tweet actions area (works on all images)
+// Add translate button to each image (top-right corner)
 function addTweetTranslateButton(tweet: Element, images: HTMLImageElement[]) {
-  // Don't add if already added
-  if (tweet.querySelector('.xsanctuary-tweet-translate-btn')) return;
+  for (const img of images) {
+    addImageTranslateButton(img);
+  }
+}
 
-  // Find the tweet actions bar (like, retweet, share buttons)
-  const actionsBar = tweet.querySelector('[role="group"]');
-  if (!actionsBar) return;
+// Add translate button to a single image
+function addImageTranslateButton(img: HTMLImageElement) {
+  // Find the tweetPhoto container
+  const container = img.closest('div[data-testid="tweetPhoto"]') as HTMLElement;
+  if (!container) return;
+
+  // Don't add if already added
+  if (container.querySelector('.xsanctuary-image-translate-btn')) return;
+
+  // Ensure container has relative positioning
+  if (getComputedStyle(container).position === 'static') {
+    container.style.position = 'relative';
+  }
 
   const btn = document.createElement('button');
-  btn.className = 'xsanctuary-tweet-translate-btn';
+  btn.className = 'xsanctuary-image-translate-btn';
   btn.innerHTML = '🌐';
-  btn.title = `Translate ${images.length} image${images.length > 1 ? 's' : ''} (right-click to clear cache)`;
+  btn.title = 'Translate comic (right-click to clear cache)';
 
   // Right-click to clear cache
   btn.addEventListener('contextmenu', (e) => {
@@ -1239,59 +1474,69 @@ function addTweetTranslateButton(tweet: Element, images: HTMLImageElement[]) {
     btn.innerHTML = '<span class="xsanctuary-spinner"></span>';
 
     try {
-      // Process all images in the tweet
-      const results = await Promise.all(
-        images.map(async (img) => {
-          // Wait for image to be ready
-          if (img.clientWidth < 100 || img.clientHeight < 100) {
-            await new Promise<void>((resolve) => {
-              const observer = new ResizeObserver(() => {
-                if (img.clientWidth >= 100 && img.clientHeight >= 100) {
-                  observer.disconnect();
-                  resolve();
-                }
-              });
-              observer.observe(img);
-              setTimeout(() => { observer.disconnect(); resolve(); }, 3000);
-            });
-          }
-          return detectAndProcessComic(img, img.src);
-        })
-      );
+      // Wait for image to be ready
+      if (img.clientWidth < 100 || img.clientHeight < 100) {
+        await new Promise<void>((resolve) => {
+          const observer = new ResizeObserver(() => {
+            if (img.clientWidth >= 100 && img.clientHeight >= 100) {
+              observer.disconnect();
+              resolve();
+            }
+          });
+          observer.observe(img);
+          setTimeout(() => { observer.disconnect(); resolve(); }, 3000);
+        });
+      }
 
-      const totalBubbles = results.reduce((sum, r) => sum + (r?.bubbles?.length || 0), 0);
-      if (totalBubbles > 0) {
+      const result = await detectAndProcessComic(img, img.src);
+
+      if (result && result.bubbles.length > 0) {
         btn.innerHTML = '✓';
-        btn.title = `Found ${totalBubbles} bubble${totalBubbles > 1 ? 's' : ''}`;
+        btn.title = `Found ${result.bubbles.length} bubble${result.bubbles.length > 1 ? 's' : ''}`;
+        btn.classList.add('success');
       } else {
         btn.innerHTML = '∅';
         btn.title = 'No speech bubbles found';
       }
+      btn.classList.remove('loading');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[XSanctuary] Tweet translation failed:', errorMessage);
+      console.error('[XSanctuary] Image translation failed:', errorMessage);
       btn.innerHTML = '❌';
       btn.title = `Detection failed: ${errorMessage}`;
       btn.classList.remove('loading');
     }
   });
 
-  actionsBar.appendChild(btn);
+  container.appendChild(btn);
 }
 
 async function detectAndProcessComic(img: HTMLImageElement, imageUrl: string): Promise<DetectionResult | null> {
   const mode = cachedSettings?.comicTranslation.mode || 'bubble';
   const normalizedUrl = normalizeTwitterImageUrl(imageUrl);
 
+  console.log('[XSanctuary] detectAndProcessComic called with:');
+  console.log('[XSanctuary]   Original URL:', imageUrl);
+  console.log('[XSanctuary]   Normalized URL:', normalizedUrl);
+  console.log('[XSanctuary]   Image dimensions:', img.naturalWidth, 'x', img.naturalHeight);
+
   // Check cache first
   let detectionResult = imageDetectionCache.get(normalizedUrl);
 
   if (!detectionResult) {
-    // Run YOLO detection
-    console.log('[XSanctuary] Running comic detection...');
-    detectionResult = await detectBubblesInImage(imageUrl);
+    // Run YOLO detection with configurable confidence
+    const confidenceThreshold = cachedSettings?.comicTranslation?.confidenceThreshold ?? 0.3;
+    console.log('[XSanctuary] Running comic detection on:', normalizedUrl, 'with confidence:', confidenceThreshold);
+    detectionResult = await detectBubblesInImage(imageUrl, confidenceThreshold);
     imageDetectionCache.set(normalizedUrl, detectionResult);
-    console.log(`[XSanctuary] Detected ${detectionResult.bubbles.length} bubbles`);
+    console.log(`[XSanctuary] Detection result:`, {
+      bubbles: detectionResult.bubbles.length,
+      imageWidth: detectionResult.imageWidth,
+      imageHeight: detectionResult.imageHeight,
+      inferenceTime: detectionResult.inferenceTime,
+    });
+  } else {
+    console.log('[XSanctuary] Using cached detection result:', detectionResult.bubbles.length, 'bubbles');
   }
 
   if (detectionResult.bubbles.length === 0) {
@@ -1333,11 +1578,11 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
     const overlay = document.createElement('div');
     overlay.className = 'xsanctuary-bubble-overlay';
 
-    // Calculate position as percentage of image dimensions
-    const left = (bubble.x - bubble.width / 2) * 100;
-    const top = (bubble.y - bubble.height / 2) * 100;
-    const width = bubble.width * 100;
-    const height = bubble.height * 100;
+    // Use exact bbox coordinates from YOLO (no padding)
+    const left = (bubble.bbox.x1 / detectionResult.imageWidth) * 100;
+    const top = (bubble.bbox.y1 / detectionResult.imageHeight) * 100;
+    const width = ((bubble.bbox.x2 - bubble.bbox.x1) / detectionResult.imageWidth) * 100;
+    const height = ((bubble.bbox.y2 - bubble.bbox.y1) / detectionResult.imageHeight) * 100;
 
     // Create translation text element (hidden by default)
     const translationEl = document.createElement('div');
@@ -1352,21 +1597,11 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
       height: ${height}%;
       pointer-events: auto;
       cursor: pointer;
-      transition: all 0.2s ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
     `;
 
-    // Apply mask shape if available, otherwise use ellipse
-    if (bubble.maskPath) {
-      overlay.style.clipPath = bubble.maskPath;
-      translationEl.style.clipPath = bubble.maskPath;
-    } else {
-      // Fallback to ellipse shape for speech bubbles
-      overlay.style.borderRadius = '50%';
-    }
+    // Always use ellipse for text - clip-path would cut off text
+    // The ellipse approximates most speech bubble shapes well
+    translationEl.style.borderRadius = '50%';
 
     overlay.appendChild(translationEl);
 
@@ -1404,10 +1639,24 @@ async function fetchBubbleTranslation(
   const overlay = translationEl.parentElement;
 
   // Check cache first
-  let translation = bubbleTranslationCache.get(cacheKey);
+  const cachedData = bubbleTranslationCache.get(cacheKey);
 
-  if (translation) {
-    translationEl.textContent = translation;
+  if (cachedData) {
+    // Parse cached data (may include colors)
+    try {
+      const parsed = JSON.parse(cachedData);
+      translationEl.textContent = parsed.text || cachedData;
+      if (parsed.textColor) {
+        translationEl.style.color = parsed.textColor;
+        translationEl.style.borderColor = parsed.textColor; // Stroke matches text
+      }
+      if (parsed.bgColor) translationEl.style.backgroundColor = parsed.bgColor;
+    } catch {
+      // Legacy cache entry (plain text)
+      translationEl.textContent = cachedData;
+    }
+    // Fit text to bubble (pass maskPath for shape-aware layout)
+    fitTextToBubble(translationEl, bubble.maskPath);
     overlay?.classList.add('xsanctuary-bubble-fetched');
     return;
   }
@@ -1437,9 +1686,22 @@ async function fetchBubbleTranslation(
       translationEl.title = response.error;
     } else {
       const translatedText = response.text || '[No text]';
-      console.log('[XSanctuary] Bubble translation result:', translatedText);
-      bubbleTranslationCache.set(cacheKey, translatedText);
+      const textColor = response.textColor || '#000000';
+      const bgColor = response.bgColor || '#FFFFFF';
+
+      console.log('[XSanctuary] Bubble translation result:', { text: translatedText, textColor, bgColor });
+
+      // Cache the full result including colors
+      bubbleTranslationCache.set(cacheKey, JSON.stringify({ text: translatedText, textColor, bgColor }));
+
+      // Apply text and colors
       translationEl.textContent = translatedText;
+      translationEl.style.color = textColor;
+      translationEl.style.backgroundColor = bgColor;
+      translationEl.style.borderColor = textColor; // Stroke matches text color
+
+      // Calculate optimal font size based on bubble size and text length (shape-aware)
+      fitTextToBubble(translationEl, bubble.maskPath);
     }
     overlay?.classList.add('xsanctuary-bubble-fetched');
   } catch (error) {

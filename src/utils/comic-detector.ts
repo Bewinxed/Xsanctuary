@@ -1,35 +1,47 @@
-import {
-  detectBubbles,
-  isModelLoaded,
-  loadModel,
-  type BubbleDetection,
-  type DetectionResult,
-  type DownloadProgressCallback,
-} from './yolo-inference';
+/**
+ * Comic/manga detection utilities
+ * Uses background script for YOLO inference to avoid blocking the main thread
+ */
 
-// Re-export types
-export type { BubbleDetection, DetectionResult, DownloadProgressCallback };
+// Types (matching yolo-background.ts)
+export interface BubbleDetection {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+  bbox: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  };
+  maskPath?: string;
+}
 
-// Cache for detection results
+export interface DetectionResult {
+  bubbles: BubbleDetection[];
+  imageWidth: number;
+  imageHeight: number;
+  inferenceTime: number;
+}
+
+export type DownloadProgressCallback = (progress: number, status: string) => void;
+
+// Cache for detection results (LRU-style with max size)
 const detectionCache = new Map<string, DetectionResult>();
 const MAX_CACHE_SIZE = 100;
 
-// Minimum number of bubbles to consider an image a comic
-const MIN_BUBBLES_FOR_COMIC = 1;
-
-// Minimum confidence threshold for comic detection (0.5 = 50% confidence)
-const COMIC_DETECTION_CONFIDENCE = 0.5;
+// Default confidence threshold (can be overridden by settings)
+const DEFAULT_CONFIDENCE_THRESHOLD = 0.3;
 
 /**
  * Check if an image is a comic/manga (has speech bubbles)
  */
-export async function isComic(
-  imageUrl: string,
-  onProgress?: DownloadProgressCallback
-): Promise<boolean> {
+export async function isComic(imageUrl: string): Promise<boolean> {
   try {
-    const result = await detectBubblesInImage(imageUrl, onProgress);
-    return result.bubbles.length >= MIN_BUBBLES_FOR_COMIC;
+    const result = await detectBubblesInImage(imageUrl);
+    return result.bubbles.length >= 1;
   } catch (e) {
     console.warn('[ComicDetector] Failed to detect if image is comic:', e);
     return false;
@@ -38,11 +50,15 @@ export async function isComic(
 
 /**
  * Detect speech bubbles in an image
- * Returns cached result if available
+ * Runs in background script to avoid blocking UI
+ * @param imageUrl - URL of the image to analyze
+ * @param confidenceThreshold - Confidence threshold for detection (0.1-1.0), default 0.3
+ * @param _onProgress - Optional progress callback (unused, kept for API compatibility)
  */
 export async function detectBubblesInImage(
   imageUrl: string,
-  onProgress?: DownloadProgressCallback
+  confidenceThreshold: number = DEFAULT_CONFIDENCE_THRESHOLD,
+  _onProgress?: DownloadProgressCallback
 ): Promise<DetectionResult> {
   // Check cache first
   const cached = detectionCache.get(imageUrl);
@@ -50,12 +66,22 @@ export async function detectBubblesInImage(
     return cached;
   }
 
-  // Run detection
-  const result = await detectBubbles(imageUrl, COMIC_DETECTION_CONFIDENCE, 0.5, onProgress);
+  // Send to background script for processing
+  const response = await browser.runtime.sendMessage({
+    type: 'YOLO_DETECT',
+    imageUrl,
+    confidenceThreshold,
+    nmsThreshold: 0.5,
+  });
 
-  // Cache result
+  if (response.error) {
+    throw new Error(response.error);
+  }
+
+  const result = response as DetectionResult;
+
+  // Cache result (LRU eviction)
   if (detectionCache.size >= MAX_CACHE_SIZE) {
-    // Remove oldest entry
     const firstKey = detectionCache.keys().next().value;
     if (firstKey) detectionCache.delete(firstKey);
   }
@@ -64,147 +90,73 @@ export async function detectBubblesInImage(
   return result;
 }
 
-// Fetch image as blob to avoid CORS issues (extension has host permissions)
-async function fetchImageAsBlob(imageUrl: string): Promise<string> {
-  try {
-    const response = await fetch(imageUrl);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    // Read the entire response body as an array buffer first
-    const arrayBuffer = await response.arrayBuffer();
-    console.log(`[XSanctuary] Fetched ${arrayBuffer.byteLength} bytes from ${imageUrl.substring(0, 80)}...`);
-
-    // Create blob from the complete data
-    const blob = new Blob([arrayBuffer], { type: response.headers.get('content-type') || 'image/jpeg' });
-    return URL.createObjectURL(blob);
-  } catch (e) {
-    console.warn('[ComicDetector] Fetch failed, using original URL:', e);
-    return imageUrl;
-  }
-}
-
 /**
  * Convert an image URL to base64
+ * Runs in background script using OffscreenCanvas
  */
 export async function getImageAsBase64(imageUrl: string): Promise<string> {
-  const blobUrl = await fetchImageAsBlob(imageUrl);
-
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(img, 0, 0);
-
-        // Get as PNG base64
-        const dataUrl = canvas.toDataURL('image/png');
-        // Remove the "data:image/png;base64," prefix
-        const base64 = dataUrl.split(',')[1];
-
-        if (blobUrl !== imageUrl) URL.revokeObjectURL(blobUrl);
-        resolve(base64);
-      } catch (e) {
-        if (blobUrl !== imageUrl) URL.revokeObjectURL(blobUrl);
-        reject(e);
-      }
-    };
-
-    img.onerror = () => {
-      if (blobUrl !== imageUrl) URL.revokeObjectURL(blobUrl);
-      reject(new Error('Failed to load image for base64 conversion'));
-    };
-    img.src = blobUrl;
+  const response = await browser.runtime.sendMessage({
+    type: 'YOLO_GET_IMAGE_BASE64',
+    imageUrl,
   });
+
+  if (response.error) {
+    throw new Error(response.error);
+  }
+
+  return response.base64;
 }
 
 /**
  * Crop a specific bubble from an image and return as base64
+ * Runs in background script using OffscreenCanvas
  */
 export async function cropBubbleToBase64(
   imageUrl: string,
   bubble: BubbleDetection,
-  padding: number = 20, // Increased padding for better context
-  originalWidth?: number, // Original image width from detection
-  originalHeight?: number // Original image height from detection
+  padding: number = 20,
+  originalWidth?: number,
+  originalHeight?: number
 ): Promise<string> {
-  const blobUrl = await fetchImageAsBlob(imageUrl);
-
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-
-    img.onload = async () => {
-      try {
-        // Wait for image to be fully decoded (not just metadata loaded)
-        if (img.decode) {
-          await img.decode();
-        }
-
-        // Scale bbox if the loaded image has different dimensions than the detection image
-        let scaleX = 1;
-        let scaleY = 1;
-
-        if (originalWidth && originalHeight && (img.width !== originalWidth || img.height !== originalHeight)) {
-          scaleX = img.width / originalWidth;
-          scaleY = img.height / originalHeight;
-          console.log(`[XSanctuary] Scaling crop: detection was ${originalWidth}x${originalHeight}, loaded ${img.width}x${img.height}, scale: ${scaleX.toFixed(2)}x${scaleY.toFixed(2)}`);
-        }
-
-        // Scale and add padding around the bubble
-        const x1 = Math.max(0, (bubble.bbox.x1 * scaleX) - padding);
-        const y1 = Math.max(0, (bubble.bbox.y1 * scaleY) - padding);
-        const x2 = Math.min(img.width, (bubble.bbox.x2 * scaleX) + padding);
-        const y2 = Math.min(img.height, (bubble.bbox.y2 * scaleY) + padding);
-
-        const width = x2 - x1;
-        const height = y2 - y1;
-
-        console.log(`[XSanctuary] Cropping: original bbox (${bubble.bbox.x1.toFixed(0)},${bubble.bbox.y1.toFixed(0)})-(${bubble.bbox.x2.toFixed(0)},${bubble.bbox.y2.toFixed(0)}), scaled crop (${x1.toFixed(0)},${y1.toFixed(0)})-(${x2.toFixed(0)},${y2.toFixed(0)})`);
-        console.log(`[XSanctuary] Image naturalWidth: ${img.naturalWidth}, naturalHeight: ${img.naturalHeight}, complete: ${img.complete}`);
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d')!;
-
-        ctx.drawImage(img, x1, y1, width, height, 0, 0, width, height);
-
-        // Get as PNG base64
-        const dataUrl = canvas.toDataURL('image/png');
-        const base64 = dataUrl.split(',')[1];
-
-        if (blobUrl !== imageUrl) URL.revokeObjectURL(blobUrl);
-        resolve(base64);
-      } catch (e) {
-        if (blobUrl !== imageUrl) URL.revokeObjectURL(blobUrl);
-        reject(e);
-      }
-    };
-
-    img.onerror = () => {
-      if (blobUrl !== imageUrl) URL.revokeObjectURL(blobUrl);
-      reject(new Error('Failed to load image for cropping'));
-    };
-    img.src = blobUrl;
+  const response = await browser.runtime.sendMessage({
+    type: 'YOLO_CROP_BUBBLE',
+    imageUrl,
+    bubble,
+    padding,
+    originalWidth,
+    originalHeight,
   });
+
+  if (response.error) {
+    throw new Error(response.error);
+  }
+
+  return response.base64;
 }
 
 /**
- * Preload the YOLO model
+ * Preload the YOLO model (triggers background script to load it)
  */
-export async function preloadModel(onProgress?: DownloadProgressCallback): Promise<void> {
-  await loadModel(onProgress);
+export async function preloadModel(): Promise<void> {
+  // Just trigger a detection to warm up the model
+  // The background script will cache the model after first load
+  try {
+    await browser.runtime.sendMessage({
+      type: 'YOLO_DETECT',
+      imageUrl: 'about:blank', // Will fail gracefully but load the model
+      confidenceThreshold: 0.5,
+      nmsThreshold: 0.5,
+    });
+  } catch {
+    // Expected to fail, but model is now loaded
+  }
 }
 
 /**
- * Check if the model is already loaded
+ * Check if the model is loaded (always true since background handles it)
  */
 export function isDetectionModelLoaded(): boolean {
-  return isModelLoaded();
+  return true; // Background script manages model state
 }
 
 /**
@@ -219,12 +171,11 @@ export function clearDetectionCache(): void {
  */
 export function getBubbleAtPoint(
   result: DetectionResult,
-  x: number, // Mouse X relative to image
-  y: number, // Mouse Y relative to image
+  x: number,
+  y: number,
   imageWidth: number,
   imageHeight: number
 ): BubbleDetection | null {
-  // Normalize coordinates
   const normalizedX = x / imageWidth;
   const normalizedY = y / imageHeight;
 

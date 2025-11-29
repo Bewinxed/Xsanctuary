@@ -6,11 +6,54 @@ import {
   type OpenRouterModel,
 } from '@/utils/vision-llm';
 
+// Offscreen document management
+let creatingOffscreen: Promise<void> | null = null;
+
+async function ensureOffscreenDocument() {
+  const offscreenUrl = 'offscreen.html';
+
+  // Check if offscreen document already exists
+  // @ts-expect-error - chrome.offscreen types may not be available
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL(offscreenUrl)],
+  });
+
+  if (existingContexts.length > 0) {
+    return; // Already exists
+  }
+
+  // Wait if another call is already creating it
+  if (creatingOffscreen) {
+    await creatingOffscreen;
+    return;
+  }
+
+  // Create the offscreen document
+  creatingOffscreen = chrome.offscreen.createDocument({
+    url: offscreenUrl,
+    reasons: [chrome.offscreen.Reason.WORKERS],
+    justification: 'Run YOLO ML inference for comic bubble detection',
+  });
+
+  await creatingOffscreen;
+  creatingOffscreen = null;
+  console.log('[XSanctuary] Offscreen document created');
+}
+
+// Send message to offscreen document
+async function sendToOffscreen(message: Record<string, unknown>) {
+  await ensureOffscreenDocument();
+  return chrome.runtime.sendMessage({ ...message, target: 'offscreen' });
+}
+
 export default defineBackground(() => {
   console.log('[XSanctuary] Background script loaded');
 
   // Handle all message types
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Ignore messages meant for offscreen
+    if (message.target === 'offscreen') return;
     if (message.type === 'LLM_TRANSFORM') {
       handleLlmTransform(message, sender.tab?.id);
       return true; // Keep channel open for async response
@@ -43,6 +86,29 @@ export default defineBackground(() => {
         .catch((e) => sendResponse({ error: e.message }));
       return true;
     }
+
+    // YOLO detection handlers - forward to offscreen document
+    if (message.type === 'YOLO_DETECT') {
+      console.log('[XSanctuary] Forwarding YOLO_DETECT to offscreen');
+      sendToOffscreen(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
+    if (message.type === 'YOLO_GET_IMAGE_BASE64') {
+      sendToOffscreen(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
+    if (message.type === 'YOLO_CROP_BUBBLE') {
+      sendToOffscreen(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
   });
 });
 
@@ -64,7 +130,7 @@ async function handleTranslateBubble(message: {
   targetLanguage: string;
   cacheKey?: string;
   skipCache?: boolean;
-}): Promise<{ text: string; error?: string }> {
+}): Promise<{ text: string; textColor?: string; bgColor?: string; error?: string }> {
   const { apiKey, model, bubbleBase64, targetLanguage, cacheKey, skipCache } = message;
 
   // Check cache first (unless skipCache is true)
@@ -72,7 +138,14 @@ async function handleTranslateBubble(message: {
     const cachedResult = await getCachedLlmResponse(cacheKey);
     if (cachedResult) {
       console.log('[XSanctuary] Using cached bubble translation:', cachedResult);
-      return { text: cachedResult };
+      // Try to parse as JSON (new format with colors)
+      try {
+        const parsed = JSON.parse(cachedResult);
+        return { text: parsed.text, textColor: parsed.textColor, bgColor: parsed.bgColor };
+      } catch {
+        // Legacy cache entry (plain text)
+        return { text: cachedResult };
+      }
     }
   }
 
@@ -85,8 +158,14 @@ async function handleTranslateBubble(message: {
 
   // Cache successful result (but not error responses like [empty] or [unreadable])
   if (cacheKey && result.text && !result.error && !result.text.startsWith('[')) {
-    await setCachedLlmResponse(cacheKey, result.text);
-    console.log('[XSanctuary] Cached bubble translation');
+    // Cache as JSON to preserve colors
+    const cacheData = JSON.stringify({
+      text: result.text,
+      textColor: result.textColor,
+      bgColor: result.bgColor,
+    });
+    await setCachedLlmResponse(cacheKey, cacheData);
+    console.log('[XSanctuary] Cached bubble translation with colors');
   }
 
   return result;

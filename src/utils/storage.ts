@@ -26,6 +26,7 @@ export interface ComicTranslationSettings {
   targetLanguage: string;
   triggerMode: ComicTriggerMode;
   bubbleModel: string; // User-selected model for bubble OCR
+  confidenceThreshold: number; // Detection confidence 0.1 to 1.0
 }
 
 export interface Settings {
@@ -44,6 +45,7 @@ const defaultComicTranslationSettings: ComicTranslationSettings = {
   targetLanguage: 'en',
   triggerMode: 'button',
   bubbleModel: 'google/gemini-2.5-flash',
+  confidenceThreshold: 0.3, // Default 0.3 for more sensitive detection
 };
 
 const defaultSettings: Settings = {

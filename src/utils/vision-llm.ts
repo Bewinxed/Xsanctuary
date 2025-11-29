@@ -19,6 +19,8 @@ export interface OpenRouterModel {
 
 export interface TranslationResult {
   text: string;
+  textColor?: string; // Hex color of original text
+  bgColor?: string; // Hex color of bubble background
   error?: string;
 }
 
@@ -100,6 +102,7 @@ export async function fetchImageGenerationModels(apiKey: string): Promise<OpenRo
 
 /**
  * Translate text from a bubble image using a vision model
+ * Returns translated text along with detected colors for styling
  */
 export async function translateBubbleText(
   apiKey: string,
@@ -111,9 +114,17 @@ export async function translateBubbleText(
 The text may be in Japanese, Korean, Chinese, or another language.
 The text may be vertical (top to bottom) or horizontal.
 Extract ALL visible text and translate it to ${targetLanguage}.
-Return ONLY the translated text, nothing else. Keep it concise.
+
+Return ONLY a JSON object with these fields:
+- "text": the translated text (keep it concise)
+- "textColor": hex color of the original text (e.g. "#000000")
+- "bgColor": hex color of the bubble background (e.g. "#FFFFFF")
+
 If there are sound effects (onomatopoeia), translate or romanize them.
-If the bubble appears empty or you truly cannot read any text, respond with "[empty]".`;
+If the bubble appears empty or you truly cannot read any text, use "[empty]" for text.
+If you can't determine colors, use defaults: textColor="#000000", bgColor="#FFFFFF"
+
+Example response: {"text": "Hello!", "textColor": "#000000", "bgColor": "#FFFFFF"}`;
 
   try {
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -150,9 +161,30 @@ If the bubble appears empty or you truly cannot read any text, respond with "[em
     }
 
     const data = await response.json();
-    const text = data.choices?.[0]?.message?.content?.trim() || '';
+    const content = data.choices?.[0]?.message?.content?.trim() || '';
 
-    return { text };
+    // Try to parse as JSON
+    try {
+      // Extract JSON from response (may be wrapped in markdown code blocks)
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          text: parsed.text || '',
+          textColor: parsed.textColor || '#000000',
+          bgColor: parsed.bgColor || '#FFFFFF',
+        };
+      }
+    } catch {
+      // JSON parsing failed, fall back to treating content as plain text
+    }
+
+    // Fallback: return content as text with default colors
+    return {
+      text: content,
+      textColor: '#000000',
+      bgColor: '#FFFFFF',
+    };
   } catch (e) {
     return { text: '', error: e instanceof Error ? e.message : 'Unknown error' };
   }

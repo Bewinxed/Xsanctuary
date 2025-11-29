@@ -9,6 +9,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Separator } from '$lib/components/ui/separator';
+  import { Slider } from '$lib/components/ui/slider';
   import * as Card from '$lib/components/ui/card';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { getSettings, saveSettings, type Settings, type CountryRule, type SoftAction, type HardAction, type Theme, type ComicTranslationSettings } from '@/utils/storage';
@@ -30,6 +31,7 @@
       targetLanguage: 'en',
       triggerMode: 'button',
       bubbleModel: 'google/gemini-2.5-flash',
+      confidenceThreshold: 0.3,
     },
   });
 
@@ -636,6 +638,25 @@
               {/each}
             </Select.Content>
           </Select.Root>
+        </div>
+
+        <!-- Detection Sensitivity -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <Label class="text-xs text-muted-foreground">Detection Sensitivity</Label>
+            <span class="text-xs text-muted-foreground">{Math.round((settings.comicTranslation.confidenceThreshold ?? 0.3) * 100)}%</span>
+          </div>
+          <Slider
+            value={[settings.comicTranslation.confidenceThreshold ?? 0.3]}
+            min={0.1}
+            max={0.9}
+            step={0.05}
+            onValueChange={(v) => updateComicTranslation('confidenceThreshold', v[0])}
+            class="w-full"
+          />
+          <p class="text-[10px] text-muted-foreground">
+            Lower = more bubbles detected (may include false positives)
+          </p>
         </div>
 
         <!-- Mode Selection -->
