@@ -647,11 +647,12 @@
             <span class="text-xs text-muted-foreground">{Math.round((settings.comicTranslation.confidenceThreshold ?? 0.3) * 100)}%</span>
           </div>
           <Slider
-            value={[settings.comicTranslation.confidenceThreshold ?? 0.3]}
+            type="single"
+            value={settings.comicTranslation.confidenceThreshold ?? 0.3}
             min={0.1}
             max={0.9}
             step={0.05}
-            onValueChange={(v) => updateComicTranslation('confidenceThreshold', v[0])}
+            onValueChange={(v: number) => updateComicTranslation('confidenceThreshold', v)}
             class="w-full"
           />
           <p class="text-[10px] text-muted-foreground">
