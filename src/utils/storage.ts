@@ -19,6 +19,7 @@ export type Theme = 'light' | 'dark' | 'system';
 
 export type ComicTranslationMode = 'bubble' | 'auto';
 export type ComicTriggerMode = 'button' | 'auto';
+export type BubbleShapeMode = 'ellipse' | 'mask'; // ellipse = simple oval, mask = actual detected contour
 
 export interface ComicTranslationSettings {
   enabled: boolean;
@@ -27,6 +28,7 @@ export interface ComicTranslationSettings {
   triggerMode: ComicTriggerMode;
   bubbleModel: string; // User-selected model for bubble OCR
   confidenceThreshold: number; // Detection confidence 0.1 to 1.0
+  bubbleShape: BubbleShapeMode; // Shape of translation overlay
 }
 
 export interface Settings {
@@ -46,6 +48,7 @@ const defaultComicTranslationSettings: ComicTranslationSettings = {
   triggerMode: 'button',
   bubbleModel: 'google/gemini-2.5-flash',
   confidenceThreshold: 0.3, // Default 0.3 for more sensitive detection
+  bubbleShape: 'mask', // Default to using actual detected bubble shape
 };
 
 const defaultSettings: Settings = {

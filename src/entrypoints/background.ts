@@ -2,6 +2,7 @@ import { getLlmCacheKey, getCachedLlmResponse, setCachedLlmResponse, clearLlmCac
 import {
   fetchAvailableModels,
   translateBubbleText,
+  translateBubbleTextStreaming,
   translateFullImage,
   type OpenRouterModel,
 } from '@/utils/vision-llm';
@@ -73,6 +74,19 @@ export default defineBackground(() => {
       handleTranslateBubble(message)
         .then(sendResponse)
         .catch((e) => sendResponse({ text: '', error: e.message }));
+      return true;
+    }
+
+    if (message.type === 'VISION_TRANSLATE_BUBBLE_STREAM') {
+      // Streaming translation - sends chunks back via tab messages
+      const tabId = sender.tab?.id;
+      if (tabId) {
+        handleTranslateBubbleStreaming(message, tabId)
+          .then(sendResponse)
+          .catch((e) => sendResponse({ text: '', error: e.message }));
+      } else {
+        sendResponse({ text: '', error: 'No tab ID for streaming' });
+      }
       return true;
     }
 
@@ -169,6 +183,67 @@ async function handleTranslateBubble(message: {
     });
     await setCachedLlmResponse(cacheKey, cacheData);
     console.log('[XSanctuary] Cached bubble translation with colors');
+  }
+
+  return result;
+}
+
+// Handle streaming bubble text translation
+async function handleTranslateBubbleStreaming(
+  message: {
+    apiKey: string;
+    model: string;
+    bubbleBase64: string;
+    targetLanguage: string;
+    cacheKey?: string;
+    streamId: string; // Unique ID to correlate chunks
+  },
+  tabId: number
+): Promise<{ text: string; textColor?: string; bgColor?: string; error?: string }> {
+  const { apiKey, model, bubbleBase64, targetLanguage, cacheKey, streamId } = message;
+
+  // Check cache first - if cached, return immediately (no streaming needed)
+  if (cacheKey) {
+    const cachedResult = await getCachedLlmResponse(cacheKey);
+    if (cachedResult) {
+      console.log('[XSanctuary] Using cached bubble translation (no streaming)');
+      try {
+        const parsed = JSON.parse(cachedResult);
+        return { text: parsed.text, textColor: parsed.textColor, bgColor: parsed.bgColor };
+      } catch {
+        return { text: cachedResult };
+      }
+    }
+  }
+
+  console.log('[XSanctuary] Starting streaming translation');
+
+  // Use streaming API - send chunks to content script
+  const result = await translateBubbleTextStreaming(
+    apiKey,
+    model,
+    bubbleBase64,
+    targetLanguage,
+    (partialText: string) => {
+      // Send chunk to content script
+      chrome.tabs.sendMessage(tabId, {
+        type: 'TRANSLATION_STREAM_CHUNK',
+        streamId,
+        partialText,
+      }).catch(() => {
+        // Tab may have closed or navigated
+      });
+    }
+  );
+
+  // Cache successful result
+  if (cacheKey && result.text && !result.error && !result.text.startsWith('[')) {
+    const cacheData = JSON.stringify({
+      text: result.text,
+      textColor: result.textColor,
+      bgColor: result.bgColor,
+    });
+    await setCachedLlmResponse(cacheKey, cacheData);
   }
 
   return result;

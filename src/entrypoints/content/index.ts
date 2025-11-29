@@ -119,6 +119,7 @@ function getShapeWidthAtY(normalizedY: number, polygonPoints: { x: number; y: nu
 /**
  * Fit text to bubble by laying out lines that respect the shape (polygon or ellipse)
  * Each line is sized and positioned to fit within the shape at that Y position
+ * Prefers more lines with larger fonts over cramming text horizontally
  */
 function fitTextToBubble(element: HTMLElement, maskPath?: string) {
   const parent = element.parentElement;
@@ -143,26 +144,86 @@ function fitTextToBubble(element: HTMLElement, maskPath?: string) {
   element.style.justifyContent = 'center';
   element.style.padding = '0';
 
-  // Calculate optimal font size based on area
-  const usableArea = containerWidth * containerHeight * 0.5;
-  const charCount = text.length;
-  let fontSize = Math.sqrt(usableArea / (charCount * 0.9));
-  fontSize = Math.max(9, Math.min(fontSize, 26));
+  // Padding factors
+  const verticalPadding = polygonPoints ? 0.15 : 0.1;
+  const horizontalPadding = polygonPoints ? 0.75 : 0.9;
 
   // Split into words
   const words = text.split(/\s+/);
-  const lineHeight = fontSize * 1.15;
 
-  // Estimate number of lines that fit
-  const maxLines = Math.floor((containerHeight * 0.75) / lineHeight);
-  const targetLines = Math.max(1, Math.min(maxLines, Math.ceil(words.length / 3)));
+  // Calculate usable height
+  const usableHeight = containerHeight * (1 - verticalPadding * 2);
 
-  // Distribute words across lines
-  const lines: string[] = [];
-  const wordsPerLine = Math.ceil(words.length / targetLines);
-  for (let i = 0; i < words.length; i += wordsPerLine) {
-    lines.push(words.slice(i, i + wordsPerLine).join(' '));
+  // Try different line configurations to find the best one
+  // Start with more lines (1 word per line) and work down to fewer lines
+  // This prefers larger fonts with more lines over cramming horizontally
+  let bestConfig: { lines: string[]; fontSize: number; score: number } | null = null;
+
+  // Try from 1 word per line up to all words on one line
+  for (let wordsPerLine = 1; wordsPerLine <= words.length; wordsPerLine++) {
+    const lines: string[] = [];
+    for (let i = 0; i < words.length; i += wordsPerLine) {
+      lines.push(words.slice(i, i + wordsPerLine).join(' '));
+    }
+
+    // Calculate font size that would fit this configuration
+    // Start with a size based on available height
+    const lineHeight = usableHeight / lines.length;
+    let fontSize = lineHeight * 0.8; // Leave some line spacing
+    fontSize = Math.max(8, Math.min(fontSize, 28)); // Clamp to reasonable range
+
+    // Check if all lines fit horizontally at this font size
+    // Create a temporary span to measure
+    const tempSpan = document.createElement('span');
+    tempSpan.style.fontSize = `${fontSize}px`;
+    tempSpan.style.fontFamily = element.style.fontFamily || '"Anime Ace", "Comic Sans MS", cursive, sans-serif';
+    tempSpan.style.visibility = 'hidden';
+    tempSpan.style.position = 'absolute';
+    tempSpan.style.whiteSpace = 'nowrap';
+    document.body.appendChild(tempSpan);
+
+    let minScale = 1;
+    const startY = (containerHeight - lines.length * lineHeight) / 2;
+
+    for (let i = 0; i < lines.length; i++) {
+      tempSpan.textContent = lines[i];
+      const textWidth = tempSpan.offsetWidth;
+
+      // Get available width at this Y position
+      const lineY = startY + (i + 0.5) * lineHeight;
+      const normalizedY = lineY / containerHeight;
+      const shape = getShapeWidthAtY(normalizedY, polygonPoints);
+      const availableWidth = containerWidth * shape.width * horizontalPadding;
+
+      if (textWidth > availableWidth && availableWidth > 0) {
+        const scale = availableWidth / textWidth;
+        minScale = Math.min(minScale, scale);
+      }
+    }
+
+    tempSpan.remove();
+
+    // Final font size after scaling
+    const finalFontSize = fontSize * minScale;
+
+    // Score: prefer larger final font sizes
+    // This naturally favors configurations with more lines and larger text
+    const score = finalFontSize;
+
+    if (!bestConfig || score > bestConfig.score) {
+      bestConfig = { lines, fontSize: finalFontSize, score };
+    }
+
+    // If we found a good config with large font, no need to try fewer lines
+    if (finalFontSize >= 16 && minScale >= 0.9) {
+      break;
+    }
   }
+
+  if (!bestConfig) return;
+
+  const { lines, fontSize } = bestConfig;
+  const lineHeight = fontSize * 1.2;
 
   // Create line elements
   const totalTextHeight = lines.length * lineHeight;
@@ -175,25 +236,8 @@ function fitTextToBubble(element: HTMLElement, maskPath?: string) {
     lineEl.style.overflow = 'visible';
     lineEl.style.lineHeight = `${lineHeight}px`;
     lineEl.style.fontSize = `${fontSize}px`;
-
-    // Calculate Y position of this line (normalized 0-1)
-    const lineY = startY + (index + 0.5) * lineHeight;
-    const normalizedY = lineY / containerHeight;
-
-    // Get available width at this Y position
-    const shape = getShapeWidthAtY(normalizedY, polygonPoints);
-    const availableWidth = containerWidth * shape.width * 0.9;
-
-    // Measure text and scale if needed
     lineEl.textContent = line;
     element.appendChild(lineEl);
-
-    // Adjust font size for this line if it's too wide
-    const textWidth = lineEl.scrollWidth;
-    if (textWidth > availableWidth && availableWidth > 0) {
-      const scale = availableWidth / textWidth;
-      lineEl.style.fontSize = `${fontSize * scale}px`;
-    }
   });
 }
 
@@ -1113,34 +1157,21 @@ async function processImagesInTweet(tweet: Element) {
     'img[src*="twimg.com/media"]'
   );
 
-  // Filter out images that are inside quoted tweets (nested tweet structures)
+  // Filter out non-media images (like link preview cards)
+  // Include images from quoted tweets (they're valid for translation)
   const images = Array.from(allImages).filter((img) => {
-    // Check if this image is inside a card wrapper (quoted tweet card)
+    // Exclude link preview card images (not comic content)
     const cardWrapper = img.closest('[data-testid="card.wrapper"]');
     if (cardWrapper) {
-      console.log('[XSanctuary Comic] Excluding image in card.wrapper');
-      return false;
-    }
-
-    // Get the image's parent link to check status ID
-    const imageLink = img.closest('a[href*="/status/"]');
-    if (!imageLink) {
-      // Image not in a status link - include it
-      return true;
-    }
-
-    const imageLinkHref = imageLink.getAttribute('href') || '';
-    const imageStatusMatch = imageLinkHref.match(/\/status\/(\d+)/);
-    const imageStatusId = imageStatusMatch?.[1];
-
-    // If we have a main tweet status ID, only include images from the same tweet
-    if (mainTweetStatusId && imageStatusId) {
-      if (imageStatusId !== mainTweetStatusId) {
-        console.log('[XSanctuary Comic] Excluding image from different status:', imageStatusId, 'vs main:', mainTweetStatusId);
+      // But allow if it's actually a tweetPhoto inside the card (quoted tweet image)
+      const tweetPhoto = img.closest('[data-testid="tweetPhoto"]');
+      if (!tweetPhoto) {
+        console.log('[XSanctuary Comic] Excluding link preview card image');
         return false;
       }
     }
 
+    // Include all tweetPhoto images (main tweet and quoted tweets)
     return true;
   }) as HTMLImageElement[];
 
@@ -1413,26 +1444,6 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
     const cacheKey = getBubbleKey(imageUrl, bubble);
     const cachedTranslation = bubbleTranslationCache.get(cacheKey);
 
-    if (cachedTranslation) {
-      // Parse cached data (may include colors)
-      try {
-        const parsed = JSON.parse(cachedTranslation);
-        translationEl.textContent = parsed.text || cachedTranslation;
-        if (parsed.textColor) {
-          translationEl.style.color = parsed.textColor;
-          translationEl.style.borderColor = parsed.textColor;
-        }
-        if (parsed.bgColor) translationEl.style.backgroundColor = parsed.bgColor;
-      } catch {
-        translationEl.textContent = cachedTranslation;
-      }
-      // Defer text fitting until element is in DOM (pass maskPath for shape-aware layout)
-      const maskPathForFit = bubble.maskPath;
-      requestAnimationFrame(() => fitTextToBubble(translationEl, maskPathForFit));
-    } else {
-      translationEl.innerHTML = '<span class="xsanctuary-bubble-loading">...</span>';
-    }
-
     overlay.style.cssText = `
       position: absolute;
       left: ${left}%;
@@ -1443,8 +1454,52 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
       cursor: pointer;
     `;
 
-    // Use ellipse border-radius but text will flow according to actual mask shape
-    translationEl.style.borderRadius = '50%';
+    // Use mask path or ellipse based on settings
+    const useMask = cachedSettings?.comicTranslation?.bubbleShape === 'mask' && bubble.maskPath;
+    if (useMask) {
+      // Mask mode: use clip-path to define the shape, remove border-radius
+      overlay.style.clipPath = bubble.maskPath!;
+      overlay.style.borderRadius = '0';
+      // Move the bubble stroke border to overlay (it will follow the clip-path)
+      overlay.style.border = '2px solid #000';
+      overlay.style.background = 'white';
+      // Translation element: no border, no clip-path, no border-radius
+      // Text is kept inside by fitTextToBubble() padding
+      translationEl.style.border = 'none';
+      translationEl.style.borderRadius = '0';
+      translationEl.style.background = 'transparent';
+    } else {
+      // Ellipse mode: use border-radius for the shape
+      overlay.style.borderRadius = '50%';
+      translationEl.style.borderRadius = '50%';
+    }
+
+    // Apply cached translation if available (AFTER mask mode setup)
+    if (cachedTranslation) {
+      try {
+        const parsed = JSON.parse(cachedTranslation);
+        translationEl.textContent = parsed.text || cachedTranslation;
+        if (parsed.textColor) {
+          translationEl.style.color = parsed.textColor;
+        }
+        if (useMask) {
+          // Mask mode: colors go on overlay
+          if (parsed.bgColor) overlay.style.background = parsed.bgColor;
+          if (parsed.textColor) overlay.style.borderColor = parsed.textColor;
+        } else {
+          // Ellipse mode: colors go on translation element
+          if (parsed.bgColor) translationEl.style.backgroundColor = parsed.bgColor;
+          if (parsed.textColor) translationEl.style.borderColor = parsed.textColor;
+        }
+      } catch {
+        translationEl.textContent = cachedTranslation;
+      }
+      // Defer text fitting until element is in DOM
+      const maskPathForFit = bubble.maskPath;
+      requestAnimationFrame(() => fitTextToBubble(translationEl, maskPathForFit));
+    } else {
+      translationEl.innerHTML = '<span class="xsanctuary-bubble-loading">...</span>';
+    }
 
     overlay.appendChild(translationEl);
 
@@ -1696,23 +1751,32 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
       cursor: pointer;
     `;
 
-    // Always use ellipse for text - clip-path would cut off text
-    // The ellipse approximates most speech bubble shapes well
-    translationEl.style.borderRadius = '50%';
+    // Use mask path or ellipse based on settings
+    const useMask = cachedSettings?.comicTranslation?.bubbleShape === 'mask' && bubble.maskPath;
+    if (useMask) {
+      // Mask mode: use clip-path to define the shape, remove border-radius
+      overlay.style.clipPath = bubble.maskPath!;
+      overlay.style.borderRadius = '0';
+      // Move the bubble stroke border to overlay (it will follow the clip-path)
+      overlay.style.border = '2px solid #000';
+      overlay.style.background = 'white';
+      // Translation element: no border, no clip-path, no border-radius
+      // Text is kept inside by fitTextToBubble() padding
+      translationEl.style.border = 'none';
+      translationEl.style.borderRadius = '0';
+      translationEl.style.background = 'transparent';
+      console.log('[XSanctuary] Using mask path for bubble shape');
+    } else {
+      // Ellipse mode: use border-radius for the shape
+      overlay.style.borderRadius = '50%';
+      translationEl.style.borderRadius = '50%';
+    }
 
     overlay.appendChild(translationEl);
 
-    // Pre-fetch translation on first hover
-    let translationFetched = false;
-
-    overlay.addEventListener('mouseenter', async () => {
-      // Show the translation overlay with fade-in
+    // Show/hide on hover
+    overlay.addEventListener('mouseenter', () => {
       overlay.classList.add('xsanctuary-bubble-active');
-
-      if (!translationFetched) {
-        translationFetched = true;
-        await fetchBubbleTranslation(translationEl, imageUrl, bubble, detectionResult.imageWidth, detectionResult.imageHeight);
-      }
     });
 
     overlay.addEventListener('mouseleave', () => {
@@ -1720,6 +1784,18 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
     });
 
     overlayContainer.appendChild(overlay);
+
+    // Start fetching translation immediately (not on hover)
+    overlay.classList.add('xsanctuary-bubble-loading-state');
+    fetchBubbleTranslation(translationEl, imageUrl, bubble, detectionResult.imageWidth, detectionResult.imageHeight)
+      .then(() => {
+        overlay.classList.remove('xsanctuary-bubble-loading-state');
+        overlay.classList.add('xsanctuary-bubble-fetched');
+      })
+      .catch((err) => {
+        console.error('[XSanctuary] Failed to fetch bubble translation:', err);
+        overlay.classList.remove('xsanctuary-bubble-loading-state');
+      });
   }
 
   container.appendChild(overlayContainer);
@@ -1743,17 +1819,28 @@ async function fetchBubbleTranslation(
     try {
       const parsed = JSON.parse(cachedData);
       translationEl.textContent = parsed.text || cachedData;
+
+      // Check if we're in mask mode
+      const isMaskMode = overlay?.style.clipPath && overlay.style.borderRadius === '0';
+
       if (parsed.textColor) {
         translationEl.style.color = parsed.textColor;
-        translationEl.style.borderColor = parsed.textColor; // Stroke matches text
       }
-      if (parsed.bgColor) translationEl.style.backgroundColor = parsed.bgColor;
+      if (isMaskMode && overlay) {
+        // Mask mode: colors go on overlay
+        if (parsed.bgColor) overlay.style.background = parsed.bgColor;
+        if (parsed.textColor) overlay.style.borderColor = parsed.textColor;
+      } else {
+        // Ellipse mode: colors go on translation element
+        if (parsed.bgColor) translationEl.style.backgroundColor = parsed.bgColor;
+        if (parsed.textColor) translationEl.style.borderColor = parsed.textColor;
+      }
     } catch {
       // Legacy cache entry (plain text)
       translationEl.textContent = cachedData;
     }
-    // Fit text to bubble (pass maskPath for shape-aware layout)
-    fitTextToBubble(translationEl, bubble.maskPath);
+    // Fit text to bubble after layout
+    requestAnimationFrame(() => fitTextToBubble(translationEl, bubble.maskPath));
     overlay?.classList.add('xsanctuary-bubble-fetched');
     return;
   }
@@ -1761,21 +1848,32 @@ async function fetchBubbleTranslation(
   try {
     const bubbleBase64 = await cropBubbleToBase64(imageUrl, bubble, 20, originalWidth, originalHeight);
 
-    // Debug: Log the cropped image URL (paste in browser address bar to view)
-    console.log('[XSanctuary] Bubble crop for translation:');
-    console.log(`[XSanctuary] Original dimensions: ${originalWidth}x${originalHeight}`);
-    console.log('[XSanctuary] Bubble bbox:', bubble.bbox);
-    console.log('[XSanctuary] Full image URL (copy to view):');
-    console.log(`data:image/png;base64,${bubbleBase64}`);
+    // Generate unique stream ID for this translation
+    const streamId = `stream-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+    // Set up listener for streaming chunks
+    const streamListener = (message: { type: string; streamId: string; partialText: string }) => {
+      if (message.type === 'TRANSLATION_STREAM_CHUNK' && message.streamId === streamId) {
+        // Update translation element with partial text as it streams
+        translationEl.textContent = message.partialText;
+        // Don't fit text yet - wait for complete response
+      }
+    };
+    browser.runtime.onMessage.addListener(streamListener);
+
+    // Use streaming API for translation
     const response = await browser.runtime.sendMessage({
-      type: 'VISION_TRANSLATE_BUBBLE',
+      type: 'VISION_TRANSLATE_BUBBLE_STREAM',
       apiKey: cachedSettings?.openRouterApiKey,
       model: cachedSettings?.comicTranslation.bubbleModel || 'google/gemini-2.5-flash',
       bubbleBase64,
       targetLanguage: cachedSettings?.comicTranslation.targetLanguage || 'en',
       cacheKey,
+      streamId,
     });
+
+    // Remove stream listener
+    browser.runtime.onMessage.removeListener(streamListener);
 
     if (response.error) {
       console.warn('[XSanctuary] Bubble translation error:', response.error);
@@ -1791,14 +1889,26 @@ async function fetchBubbleTranslation(
       // Cache the full result including colors
       bubbleTranslationCache.set(cacheKey, JSON.stringify({ text: translatedText, textColor, bgColor }));
 
-      // Apply text and colors
+      // Apply final text and colors
       translationEl.textContent = translatedText;
       translationEl.style.color = textColor;
-      translationEl.style.backgroundColor = bgColor;
-      translationEl.style.borderColor = textColor; // Stroke matches text color
 
-      // Calculate optimal font size based on bubble size and text length (shape-aware)
-      fitTextToBubble(translationEl, bubble.maskPath);
+      // Check if we're in mask mode - overlay has clip-path but no border-radius
+      const isMaskMode = overlay?.style.clipPath && overlay.style.borderRadius === '0';
+      if (isMaskMode && overlay) {
+        // Mask mode: colors go on overlay (which has the border and clip-path)
+        overlay.style.background = bgColor;
+        overlay.style.borderColor = textColor;
+        // Translation element stays transparent
+        translationEl.style.backgroundColor = 'transparent';
+      } else {
+        // Ellipse mode: colors go on translation element
+        translationEl.style.backgroundColor = bgColor;
+        translationEl.style.borderColor = textColor;
+      }
+
+      // Fit text to bubble after layout (uses mask shape)
+      requestAnimationFrame(() => fitTextToBubble(translationEl, bubble.maskPath));
     }
     overlay?.classList.add('xsanctuary-bubble-fetched');
   } catch (error) {

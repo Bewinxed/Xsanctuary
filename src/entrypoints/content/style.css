@@ -639,8 +639,10 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
 .xsanctuary-bubble-overlay {
   pointer-events: auto;
   background: transparent;
-  /* Subtle indicator - dashed border that appears on idle */
+  /* Subtle indicator - dashed border that appears on idle (ellipse mode) */
   border: 2px dashed transparent;
+  /* Default ellipse shape - JS overrides for mask mode */
+  border-radius: 50%;
   animation: xsanctuary-bubble-hint 3s ease-in-out infinite;
   /* Enable container queries for child text scaling */
   container-type: size;
@@ -648,21 +650,29 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
   overflow: visible;
 }
 
-/* Hint animation - subtle pulse to indicate interactivity */
+/* Hint animation - subtle pulse to indicate interactivity (ellipse mode only) */
 @keyframes xsanctuary-bubble-hint {
   0%, 100% { border-color: transparent; }
   50% { border-color: rgba(29, 155, 240, 0.3); }
 }
 
-/* Remove hint when already fetched/active */
+/* Remove hint when already fetched */
 .xsanctuary-bubble-overlay.xsanctuary-bubble-fetched {
   animation: none;
+}
+
+/* Fetched state - ellipse mode gets subtle blue border */
+.xsanctuary-bubble-overlay.xsanctuary-bubble-fetched:not([style*="clip-path"]) {
   border-color: rgba(29, 155, 240, 0.2);
 }
 
 /* Active state - when hovering */
 .xsanctuary-bubble-overlay.xsanctuary-bubble-active {
   animation: none;
+}
+
+/* Active state - ellipse mode hides the hint border on hover */
+.xsanctuary-bubble-overlay.xsanctuary-bubble-active:not([style*="clip-path"]) {
   border: none;
 }
 

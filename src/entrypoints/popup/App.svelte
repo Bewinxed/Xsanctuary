@@ -32,6 +32,7 @@
       triggerMode: 'button',
       bubbleModel: 'google/gemini-2.5-flash',
       confidenceThreshold: 0.3,
+      bubbleShape: 'mask',
     },
   });
 
@@ -658,6 +659,29 @@
           <p class="text-[10px] text-muted-foreground">
             Lower = more bubbles detected (may include false positives)
           </p>
+        </div>
+
+        <!-- Bubble Shape -->
+        <div class="space-y-1.5">
+          <Label class="text-xs text-muted-foreground">Bubble Shape</Label>
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              class="flex flex-col items-center gap-1 p-2 rounded-md border text-xs transition-colors {settings.comicTranslation.bubbleShape === 'ellipse' ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50'}"
+              onclick={() => updateComicTranslation('bubbleShape', 'ellipse')}
+            >
+              <span class="text-lg">⭕</span>
+              <span class="font-medium">Ellipse</span>
+              <span class="text-[10px] text-muted-foreground text-center">Simple oval shape</span>
+            </button>
+            <button
+              class="flex flex-col items-center gap-1 p-2 rounded-md border text-xs transition-colors {settings.comicTranslation.bubbleShape === 'mask' ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50'}"
+              onclick={() => updateComicTranslation('bubbleShape', 'mask')}
+            >
+              <span class="text-lg">🎭</span>
+              <span class="font-medium">Mask</span>
+              <span class="text-[10px] text-muted-foreground text-center">Match actual bubble</span>
+            </button>
+          </div>
         </div>
 
         <!-- Mode Selection -->
