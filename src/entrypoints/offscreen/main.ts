@@ -49,7 +49,6 @@ function configureWasm() {
   const wasmPath = chrome.runtime.getURL('wasm/');
   ort.env.wasm.wasmPaths = wasmPath;
   ort.env.wasm.numThreads = 1;
-  console.log('[Offscreen YOLO] WASM paths configured:', wasmPath);
 }
 
 // IndexedDB helpers
@@ -98,7 +97,6 @@ async function cacheModel(data: ArrayBuffer): Promise<void> {
 }
 
 async function downloadModel(): Promise<ArrayBuffer> {
-  console.log('[Offscreen YOLO] Downloading model...');
 
   const response = await fetch(MODEL_URL);
   if (!response.ok) {
@@ -106,7 +104,6 @@ async function downloadModel(): Promise<ArrayBuffer> {
   }
 
   const arrayBuffer = await response.arrayBuffer();
-  console.log('[Offscreen YOLO] Downloaded', (arrayBuffer.byteLength / 1024 / 1024).toFixed(1), 'MB');
 
   return arrayBuffer;
 }
@@ -123,9 +120,7 @@ async function loadModel(): Promise<ort.InferenceSession> {
       if (!modelData) {
         modelData = await downloadModel();
         await cacheModel(modelData);
-        console.log('[Offscreen YOLO] Model cached');
       } else {
-        console.log('[Offscreen YOLO] Using cached model');
       }
 
       session = await ort.InferenceSession.create(modelData, {
@@ -133,7 +128,6 @@ async function loadModel(): Promise<ort.InferenceSession> {
         graphOptimizationLevel: 'all',
       });
 
-      console.log('[Offscreen YOLO] Model loaded successfully');
       return session;
     } catch (error) {
       sessionError = error instanceof Error ? error : new Error(String(error));
@@ -450,35 +444,26 @@ async function detectBubbles(
   confidenceThreshold: number = 0.5,
   nmsThreshold: number = 0.5
 ): Promise<DetectionResult> {
-  console.log('[Offscreen YOLO] detectBubbles called with:', imageUrl.substring(0, 100) + '...');
-  console.log('[Offscreen YOLO] Confidence threshold:', confidenceThreshold);
 
   const model = await loadModel();
   const startTime = performance.now();
 
-  console.log('[Offscreen YOLO] Fetching and preprocessing image...');
   const { tensor, originalWidth, originalHeight } = await preprocessImage(imageUrl);
-  console.log('[Offscreen YOLO] Image preprocessed:', originalWidth, 'x', originalHeight);
 
   const feeds: Record<string, ort.Tensor> = {};
   feeds[model.inputNames[0]] = tensor;
 
-  console.log('[Offscreen YOLO] Running inference...');
   const results = await model.run(feeds);
   const output0 = results[model.outputNames[0]];
   const output1 = results[model.outputNames[1]];
-  console.log('[Offscreen YOLO] Inference complete, output shapes:', output0.dims, output1?.dims);
 
   const rawDetections = parseOutput(output0, output1, originalWidth, originalHeight, confidenceThreshold);
-  console.log('[Offscreen YOLO] Raw detections (before NMS):', rawDetections.length);
 
   const bubbles = nms(rawDetections, nmsThreshold);
 
   const inferenceTime = performance.now() - startTime;
-  console.log(`[Offscreen YOLO] Final result: ${bubbles.length} bubbles in ${inferenceTime.toFixed(0)}ms`);
 
   if (bubbles.length > 0) {
-    console.log('[Offscreen YOLO] Bubble confidences:', bubbles.map(b => b.confidence.toFixed(3)));
   }
 
   return { bubbles, imageWidth: originalWidth, imageHeight: originalHeight, inferenceTime };
@@ -529,4 +514,3 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender:
   return true; // Keep channel open for async response
 });
 
-console.log('[Offscreen YOLO] Offscreen document ready');

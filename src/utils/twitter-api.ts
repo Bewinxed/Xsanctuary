@@ -36,7 +36,6 @@ async function processQueue(): Promise<void> {
     // Check if we're rate limited
     if (Date.now() < rateLimitedUntil) {
       const waitTime = rateLimitedUntil - Date.now();
-      console.log(`[XSanctuary] Rate limited, waiting ${Math.round(waitTime / 1000)}s`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
 
@@ -126,22 +125,18 @@ async function twitterApiCall(endpoint: string, body: string): Promise<boolean> 
 }
 
 export async function blockUser(userId: string): Promise<boolean> {
-  console.log(`[XSanctuary] Blocking user ${userId}`);
   return twitterApiCall('blocks/create.json', `user_id=${userId}`);
 }
 
 export async function unblockUser(userId: string): Promise<boolean> {
-  console.log(`[XSanctuary] Unblocking user ${userId}`);
   return twitterApiCall('blocks/destroy.json', `user_id=${userId}`);
 }
 
 export async function muteUser(userId: string): Promise<boolean> {
-  console.log(`[XSanctuary] Muting user ${userId}`);
   return twitterApiCall('mutes/users/create.json', `user_id=${userId}`);
 }
 
 export async function unmuteUser(userId: string): Promise<boolean> {
-  console.log(`[XSanctuary] Unmuting user ${userId}`);
   return twitterApiCall('mutes/users/destroy.json', `user_id=${userId}`);
 }
 
@@ -159,7 +154,6 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
   // Check cache first
   const cached = await getCachedUser(screenName);
   if (cached) {
-    console.log(`[XSanctuary] Cache hit for @${screenName}`);
     return {
       userId: cached.userId,
       screenName: cached.screenName,
@@ -180,7 +174,6 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
 
     // Check if we're rate limited
     if (Date.now() < rateLimitedUntil) {
-      console.log(`[XSanctuary] Skipping fetch for @${screenName} - rate limited`);
       return null;
     }
 
@@ -211,7 +204,6 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
       }
 
       if (!response.ok) {
-        console.log(`[XSanctuary] API returned ${response.status} for @${screenName}`);
         return null;
       }
 
@@ -245,7 +237,6 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
         cachedAt: Date.now(),
       });
 
-      console.log(`[XSanctuary] Fetched and cached @${screenName}: ${userInfo.country || 'no location'}`);
       return userInfo;
     } catch (error) {
       console.error(`[XSanctuary] Error fetching user info for @${screenName}:`, error);

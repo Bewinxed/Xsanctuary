@@ -69,7 +69,6 @@ export async function setCachedUser(info: CachedUserInfo): Promise<void> {
     for (const removeKey of toRemove) {
       delete memoryCache[removeKey];
     }
-    console.log(`[XSanctuary] Evicted ${toRemove.length} old cache entries`);
   }
 
   // Persist to storage (debounced)
@@ -202,7 +201,6 @@ export async function setCachedLlmResponse(cacheKey: string, result: string): Pr
     for (const removeKey of toRemove) {
       delete llmMemoryCache[removeKey];
     }
-    console.log(`[XSanctuary] Evicted ${toRemove.length} old LLM cache entries`);
   }
 
   // Persist (debounced)
@@ -243,5 +241,4 @@ export async function clearLlmCache(): Promise<void> {
   llmMemoryCache = {};
   llmCacheLoaded = false;
   await llmCacheStorage.setValue({});
-  console.log('[XSanctuary] LLM cache cleared');
 }

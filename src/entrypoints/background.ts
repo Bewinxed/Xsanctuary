@@ -42,7 +42,6 @@ async function ensureOffscreenDocument() {
 
   await creatingOffscreen;
   creatingOffscreen = null;
-  console.log('[XSanctuary] Offscreen document created');
 }
 
 // Send message to offscreen document
@@ -52,8 +51,6 @@ async function sendToOffscreen(message: Record<string, unknown>) {
 }
 
 export default defineBackground(() => {
-  console.log('[XSanctuary] Background script loaded');
-
   // Handle all message types
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Ignore messages meant for offscreen
@@ -106,7 +103,6 @@ export default defineBackground(() => {
 
     // YOLO detection handlers - forward to offscreen document
     if (message.type === 'YOLO_DETECT') {
-      console.log('[XSanctuary] Forwarding YOLO_DETECT to offscreen');
       sendToOffscreen(message)
         .then(sendResponse)
         .catch((e) => sendResponse({ error: e.message }));
@@ -154,7 +150,6 @@ async function handleTranslateBubble(message: {
   if (cacheKey && !skipCache) {
     const cachedResult = await getCachedLlmResponse(cacheKey);
     if (cachedResult) {
-      console.log('[XSanctuary] Using cached bubble translation:', cachedResult);
       // Try to parse as JSON (new format with colors)
       try {
         const parsed = JSON.parse(cachedResult);
@@ -166,12 +161,7 @@ async function handleTranslateBubble(message: {
     }
   }
 
-  console.log('[XSanctuary] Calling vision API with model:', model);
-  console.log('[XSanctuary] Image size:', bubbleBase64.length, 'chars');
-
   const result = await translateBubbleText(apiKey, model, bubbleBase64, targetLanguage);
-
-  console.log('[XSanctuary] Vision API result:', result);
 
   // Cache successful result (but not error responses like [empty] or [unreadable])
   if (cacheKey && result.text && !result.error && !result.text.startsWith('[')) {
@@ -182,7 +172,6 @@ async function handleTranslateBubble(message: {
       bgColor: result.bgColor,
     });
     await setCachedLlmResponse(cacheKey, cacheData);
-    console.log('[XSanctuary] Cached bubble translation with colors');
   }
 
   return result;
@@ -206,7 +195,6 @@ async function handleTranslateBubbleStreaming(
   if (cacheKey) {
     const cachedResult = await getCachedLlmResponse(cacheKey);
     if (cachedResult) {
-      console.log('[XSanctuary] Using cached bubble translation (no streaming)');
       try {
         const parsed = JSON.parse(cachedResult);
         return { text: parsed.text, textColor: parsed.textColor, bgColor: parsed.bgColor };
@@ -215,8 +203,6 @@ async function handleTranslateBubbleStreaming(
       }
     }
   }
-
-  console.log('[XSanctuary] Starting streaming translation');
 
   // Use streaming API - send chunks to content script
   const result = await translateBubbleTextStreaming(
@@ -262,7 +248,6 @@ async function handleTranslateImage(message: {
   if (cacheKey) {
     const cachedResult = await getCachedLlmResponse(cacheKey);
     if (cachedResult) {
-      console.log('[XSanctuary] Using cached image translation');
       return { imageBase64: cachedResult };
     }
   }
@@ -272,7 +257,6 @@ async function handleTranslateImage(message: {
   // Cache successful result
   if (cacheKey && result.imageBase64 && !result.error) {
     await setCachedLlmResponse(cacheKey, result.imageBase64);
-    console.log('[XSanctuary] Cached image translation');
   }
 
   return result;
@@ -291,7 +275,6 @@ async function handleLlmTransform(
   const cachedResult = await getCachedLlmResponse(cacheKey);
 
   if (cachedResult) {
-    console.log('[XSanctuary] Using cached LLM response');
     // Send cached result as a single chunk
     browser.tabs.sendMessage(tabId, {
       type: 'LLM_TRANSFORM_CHUNK',
@@ -410,7 +393,6 @@ async function handleLlmTransform(
     // Cache the result for future use
     if (fullResult) {
       await setCachedLlmResponse(cacheKey, fullResult);
-      console.log('[XSanctuary] Cached LLM response');
     }
 
     // Signal completion

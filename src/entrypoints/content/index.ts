@@ -289,7 +289,6 @@ export default defineContentScript({
   runAt: 'document_idle',
 
   async main(ctx) {
-    console.log('[XSanctuary] Content script loaded');
 
     // Load Anime Ace font for manga translations
     // @ts-expect-error - WXT types are too strict for dynamic paths
@@ -297,7 +296,6 @@ export default defineContentScript({
     const fontFace = new FontFace('Anime Ace', `url(${fontUrl})`);
     fontFace.load().then((loadedFont) => {
       document.fonts.add(loadedFont);
-      console.log('[XSanctuary] Anime Ace font loaded');
     }).catch((err) => {
       console.warn('[XSanctuary] Failed to load Anime Ace font:', err);
     });
@@ -315,7 +313,6 @@ export default defineContentScript({
     const storageListener = (changes: { [key: string]: { newValue?: unknown } }) => {
       if (changes.settings) {
         cachedSettings = changes.settings.newValue as Settings;
-        console.log('[XSanctuary] Settings updated');
       }
     };
     browser.storage.onChanged.addListener(storageListener);
@@ -362,12 +359,10 @@ export default defineContentScript({
 
     // Handle SPA navigation
     ctx.addEventListener(window, 'wxt:locationchange', () => {
-      console.log('[XSanctuary] Location changed, reprocessing page');
       setTimeout(() => processPage(), 300);
 
       // Check if we navigated to a photo URL (lightbox)
       if (window.location.pathname.includes('/photo/')) {
-        console.log('[XSanctuary] Photo URL detected, checking for lightbox');
         setTimeout(() => checkForLightboxImage(), 500);
       }
     });
@@ -476,7 +471,6 @@ async function processTweet(tweet: Element) {
       // User is not being deceptive (either no flags or has matching flag)
       return;
     }
-    console.log(`[XSanctuary] Deception detected for @${screenName}: claims different country in profile`);
   }
 
   // Check VPN filter
@@ -485,7 +479,6 @@ async function processTweet(tweet: Element) {
       // User is not using VPN (location is accurate)
       return;
     }
-    console.log(`[XSanctuary] VPN detected for @${screenName}: location not accurate`);
   }
 
   // Apply hard action (only once per user)
@@ -630,7 +623,6 @@ async function getUserInfo(screenName: string): Promise<UserInfo | null> {
 }
 
 async function applyHardAction(userInfo: UserInfo, rule: CountryRule) {
-  console.log(`[XSanctuary] Applying ${rule.hardAction} to @${userInfo.screenName} (${userInfo.country})`);
 
   if (rule.hardAction === 'block') {
     await blockUser(userInfo.userId);
@@ -1128,17 +1120,10 @@ function hideTooltip() {
 
 // Process images in tweets for comic detection
 async function processImagesInTweet(tweet: Element) {
-  console.log('[XSanctuary Comic] processImagesInTweet called, settings:', {
-    comicEnabled: cachedSettings?.comicTranslation?.enabled,
-    hasApiKey: !!cachedSettings?.openRouterApiKey,
-  });
-
   if (!cachedSettings?.comicTranslation?.enabled) {
-    console.log('[XSanctuary Comic] Comic translation is disabled in settings');
     return;
   }
   if (!cachedSettings?.openRouterApiKey) {
-    console.log('[XSanctuary Comic] Comic translation skipped: No API key');
     return;
   }
 
@@ -1148,7 +1133,6 @@ async function processImagesInTweet(tweet: Element) {
   const mainTweetStatusMatch = tweetPermalink?.getAttribute('href')?.match(/\/status\/(\d+)/);
   const mainTweetStatusId = mainTweetStatusMatch?.[1];
 
-  console.log('[XSanctuary Comic] Main tweet status ID:', mainTweetStatusId);
 
   // Find images in the tweet - only target actual media images, not profile pics
   // tweetPhoto is the container for tweet images/media
@@ -1166,7 +1150,6 @@ async function processImagesInTweet(tweet: Element) {
       // But allow if it's actually a tweetPhoto inside the card (quoted tweet image)
       const tweetPhoto = img.closest('[data-testid="tweetPhoto"]');
       if (!tweetPhoto) {
-        console.log('[XSanctuary Comic] Excluding link preview card image');
         return false;
       }
     }
@@ -1177,7 +1160,6 @@ async function processImagesInTweet(tweet: Element) {
 
   if (images.length === 0) return;
 
-  console.log(`[XSanctuary] Found ${images.length} main tweet images (filtered from ${allImages.length})`);
 
   // Add a single translate button to the tweet (not per-image)
   addTweetTranslateButton(tweet, images);
@@ -1193,17 +1175,14 @@ function checkForLightboxImage() {
   const visibleImage = findVisibleLightboxImage();
 
   if (visibleImage && !processedImages.has(visibleImage)) {
-    console.log('[XSanctuary] Found visible lightbox image:', visibleImage.src);
     processImageForLightbox(visibleImage);
     return;
   }
 
-  console.log('[XSanctuary] No visible lightbox image found yet, will retry...');
   // Retry as the image might not be loaded yet
   setTimeout(() => {
     const img = findVisibleLightboxImage();
     if (img && !processedImages.has(img)) {
-      console.log('[XSanctuary] Found visible lightbox image via retry:', img.src);
       processImageForLightbox(img);
     }
   }, 500);
@@ -1255,7 +1234,6 @@ function findVisibleLightboxImage(): HTMLImageElement | null {
 
   // Only return if the image is reasonably centered (within 100px of center)
   if (bestMatch && bestDistance < 200) {
-    console.log('[XSanctuary] Selected visible image, distance from center:', bestDistance);
     return bestMatch;
   }
 
@@ -1312,13 +1290,11 @@ function setupLightboxObserver() {
 
       // Prevent concurrent checks
       if (lightboxCheckInProgress) {
-        console.log('[XSanctuary] Lightbox check already in progress, skipping');
         return;
       }
 
       // Only check if we're on a photo URL
       if (window.location.pathname.includes('/photo/')) {
-        console.log('[XSanctuary] Lightbox mutation detected, triggering URL-based check');
         lightboxCheckInProgress = true;
         checkForLightboxImage();
         // Reset flag after a delay to allow for carousel navigation
@@ -1332,11 +1308,9 @@ function setupLightboxObserver() {
   // Observe both #layers and document.body for lightbox detection
   const layers = document.querySelector('#layers');
   if (layers) {
-    console.log('[XSanctuary] Observing #layers for lightbox');
     observer.observe(layers, { childList: true, subtree: true });
   } else {
     // Fallback to body if #layers doesn't exist yet
-    console.log('[XSanctuary] #layers not found, observing body');
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
@@ -1378,7 +1352,6 @@ function applyLightboxTranslation(img: HTMLImageElement) {
   const cachedResult = imageDetectionCache.get(normalizedUrl);
 
   if (cachedResult && cachedResult.bubbles.length > 0) {
-    console.log('[XSanctuary] Lightbox: Applying cached overlays for', normalizedUrl.split('/').pop());
     addBubbleOverlaysToLightbox(img, normalizedUrl, cachedResult);
   } else {
     // No cached results - add translate button for user to trigger detection
@@ -1400,9 +1373,6 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
     return;
   }
 
-  console.log('[XSanctuary] Lightbox: Adding overlays to container:', container.className);
-  console.log('[XSanctuary] Lightbox: Image dimensions:', img.clientWidth, 'x', img.clientHeight);
-  console.log('[XSanctuary] Lightbox: Container position:', getComputedStyle(container).position);
 
   // DON'T modify the container's position - it breaks Twitter's carousel layout!
   // Twitter's lightbox containers already use absolute positioning
@@ -1575,9 +1545,7 @@ async function clearTranslationCaches() {
   // Also clear the persistent LLM cache in background
   try {
     await browser.runtime.sendMessage({ type: 'CLEAR_LLM_CACHE' });
-    console.log('[XSanctuary] All translation caches cleared (including persistent LLM cache)');
   } catch (e) {
-    console.log('[XSanctuary] In-memory caches cleared (LLM cache clear failed)');
   }
   showToast('Translation cache cleared');
 }
@@ -1667,10 +1635,6 @@ async function detectAndProcessComic(img: HTMLImageElement, imageUrl: string): P
   const mode = cachedSettings?.comicTranslation.mode || 'bubble';
   const normalizedUrl = normalizeTwitterImageUrl(imageUrl);
 
-  console.log('[XSanctuary] detectAndProcessComic called with:');
-  console.log('[XSanctuary]   Original URL:', imageUrl);
-  console.log('[XSanctuary]   Normalized URL:', normalizedUrl);
-  console.log('[XSanctuary]   Image dimensions:', img.naturalWidth, 'x', img.naturalHeight);
 
   // Check cache first
   let detectionResult = imageDetectionCache.get(normalizedUrl);
@@ -1678,17 +1642,8 @@ async function detectAndProcessComic(img: HTMLImageElement, imageUrl: string): P
   if (!detectionResult) {
     // Run YOLO detection with configurable confidence
     const confidenceThreshold = cachedSettings?.comicTranslation?.confidenceThreshold ?? 0.3;
-    console.log('[XSanctuary] Running comic detection on:', normalizedUrl, 'with confidence:', confidenceThreshold);
     detectionResult = await detectBubblesInImage(imageUrl, confidenceThreshold);
     imageDetectionCache.set(normalizedUrl, detectionResult);
-    console.log(`[XSanctuary] Detection result:`, {
-      bubbles: detectionResult.bubbles.length,
-      imageWidth: detectionResult.imageWidth,
-      imageHeight: detectionResult.imageHeight,
-      inferenceTime: detectionResult.inferenceTime,
-    });
-  } else {
-    console.log('[XSanctuary] Using cached detection result:', detectionResult.bubbles.length, 'bubbles');
   }
 
   if (detectionResult.bubbles.length === 0) {
@@ -1765,7 +1720,6 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
       translationEl.style.border = 'none';
       translationEl.style.borderRadius = '0';
       translationEl.style.background = 'transparent';
-      console.log('[XSanctuary] Using mask path for bubble shape');
     } else {
       // Ellipse mode: use border-radius for the shape
       overlay.style.borderRadius = '50%';
@@ -1884,7 +1838,6 @@ async function fetchBubbleTranslation(
       const textColor = response.textColor || '#000000';
       const bgColor = response.bgColor || '#FFFFFF';
 
-      console.log('[XSanctuary] Bubble translation result:', { text: translatedText, textColor, bgColor });
 
       // Cache the full result including colors
       bubbleTranslationCache.set(cacheKey, JSON.stringify({ text: translatedText, textColor, bgColor }));
