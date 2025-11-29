@@ -248,6 +248,7 @@ export default defineContentScript({
     console.log('[XSanctuary] Content script loaded');
 
     // Load Anime Ace font for manga translations
+    // @ts-expect-error - WXT types are too strict for dynamic paths
     const fontUrl = browser.runtime.getURL('fonts/animeace.ttf');
     const fontFace = new FontFace('Anime Ace', `url(${fontUrl})`);
     fontFace.load().then((loadedFont) => {

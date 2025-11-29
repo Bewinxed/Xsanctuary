@@ -6,6 +6,9 @@ import {
   type OpenRouterModel,
 } from '@/utils/vision-llm';
 
+// Chrome types for offscreen API (not in standard webextension-polyfill)
+declare const chrome: typeof globalThis.chrome;
+
 // Offscreen document management
 let creatingOffscreen: Promise<void> | null = null;
 
