@@ -17,6 +17,17 @@ export interface CountryRule {
 
 export type Theme = 'light' | 'dark' | 'system';
 
+export type ComicTranslationMode = 'bubble' | 'auto';
+export type ComicTriggerMode = 'button' | 'auto';
+
+export interface ComicTranslationSettings {
+  enabled: boolean;
+  mode: ComicTranslationMode;
+  targetLanguage: string;
+  triggerMode: ComicTriggerMode;
+  bubbleModel: string; // User-selected model for bubble OCR
+}
+
 export interface Settings {
   rules: CountryRule[];
   openRouterApiKey: string;
@@ -24,7 +35,16 @@ export interface Settings {
   llmModel: string;
   enabled: boolean;
   theme: Theme;
+  comicTranslation: ComicTranslationSettings;
 }
+
+const defaultComicTranslationSettings: ComicTranslationSettings = {
+  enabled: false,
+  mode: 'bubble',
+  targetLanguage: 'en',
+  triggerMode: 'button',
+  bubbleModel: 'google/gemini-2.5-flash',
+};
 
 const defaultSettings: Settings = {
   rules: [],
@@ -33,6 +53,7 @@ const defaultSettings: Settings = {
   llmModel: 'x-ai/grok-3-fast:free',
   enabled: true,
   theme: 'system',
+  comicTranslation: defaultComicTranslationSettings,
 };
 
 // Storage items
@@ -61,6 +82,10 @@ export async function getSettings(): Promise<Settings> {
     ...defaultSettings,
     ...stored,
     rules: ensureArray(stored?.rules as CountryRule[] | Record<string, CountryRule>),
+    comicTranslation: {
+      ...defaultComicTranslationSettings,
+      ...(stored?.comicTranslation || {}),
+    },
   };
 
   return settings;
@@ -99,4 +124,20 @@ export async function setEnabled(enabled: boolean): Promise<void> {
   const settings = await getSettings();
   settings.enabled = enabled;
   await saveSettings(settings);
+}
+
+export async function updateComicTranslationSettings(
+  updates: Partial<ComicTranslationSettings>
+): Promise<void> {
+  const settings = await getSettings();
+  settings.comicTranslation = {
+    ...settings.comicTranslation,
+    ...updates,
+  };
+  await saveSettings(settings);
+}
+
+export async function getComicTranslationSettings(): Promise<ComicTranslationSettings> {
+  const settings = await getSettings();
+  return settings.comicTranslation;
 }

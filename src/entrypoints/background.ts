@@ -1,16 +1,112 @@
 import { getLlmCacheKey, getCachedLlmResponse, setCachedLlmResponse } from '@/utils/cache';
+import {
+  fetchAvailableModels,
+  translateBubbleText,
+  translateFullImage,
+  type OpenRouterModel,
+} from '@/utils/vision-llm';
 
 export default defineBackground(() => {
   console.log('[XSanctuary] Background script loaded');
 
-  // Handle LLM transform requests with streaming
+  // Handle all message types
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'LLM_TRANSFORM') {
       handleLlmTransform(message, sender.tab?.id);
       return true; // Keep channel open for async response
     }
+
+    if (message.type === 'FETCH_OPENROUTER_MODELS') {
+      handleFetchModels(message.apiKey)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
+    if (message.type === 'VISION_TRANSLATE_BUBBLE') {
+      handleTranslateBubble(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ text: '', error: e.message }));
+      return true;
+    }
+
+    if (message.type === 'VISION_TRANSLATE_IMAGE') {
+      handleTranslateImage(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
   });
 });
+
+// Handle fetching available models from OpenRouter
+async function handleFetchModels(apiKey: string): Promise<{ models?: OpenRouterModel[]; error?: string }> {
+  try {
+    const models = await fetchAvailableModels(apiKey);
+    return { models };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Failed to fetch models' };
+  }
+}
+
+// Handle bubble text translation
+async function handleTranslateBubble(message: {
+  apiKey: string;
+  model: string;
+  bubbleBase64: string;
+  targetLanguage: string;
+  cacheKey?: string;
+}): Promise<{ text: string; error?: string }> {
+  const { apiKey, model, bubbleBase64, targetLanguage, cacheKey } = message;
+
+  // Check cache first
+  if (cacheKey) {
+    const cachedResult = await getCachedLlmResponse(cacheKey);
+    if (cachedResult) {
+      console.log('[XSanctuary] Using cached bubble translation');
+      return { text: cachedResult };
+    }
+  }
+
+  const result = await translateBubbleText(apiKey, model, bubbleBase64, targetLanguage);
+
+  // Cache successful result
+  if (cacheKey && result.text && !result.error) {
+    await setCachedLlmResponse(cacheKey, result.text);
+    console.log('[XSanctuary] Cached bubble translation');
+  }
+
+  return result;
+}
+
+// Handle full image translation
+async function handleTranslateImage(message: {
+  apiKey: string;
+  imageBase64: string;
+  targetLanguage: string;
+  cacheKey?: string;
+}): Promise<{ imageBase64?: string; error?: string }> {
+  const { apiKey, imageBase64, targetLanguage, cacheKey } = message;
+
+  // Check cache first
+  if (cacheKey) {
+    const cachedResult = await getCachedLlmResponse(cacheKey);
+    if (cachedResult) {
+      console.log('[XSanctuary] Using cached image translation');
+      return { imageBase64: cachedResult };
+    }
+  }
+
+  const result = await translateFullImage(apiKey, imageBase64, targetLanguage);
+
+  // Cache successful result
+  if (cacheKey && result.imageBase64 && !result.error) {
+    await setCachedLlmResponse(cacheKey, result.imageBase64);
+    console.log('[XSanctuary] Cached image translation');
+  }
+
+  return result;
+}
 
 async function handleLlmTransform(
   message: { text: string; apiKey: string; prompt: string; model: string; requestId: string },

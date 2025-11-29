@@ -3,6 +3,15 @@ import { getSettings, saveSettings, type CountryRule, type Settings } from '@/ut
 import { toUwuSpeak, toCatSpeak } from '@/utils/transforms';
 import { blockUser, muteUser, fetchUserInfo, type UserInfo } from '@/utils/twitter-api';
 import { LRUCache, BoundedSet } from '@/utils/lru-cache';
+import {
+  detectBubblesInImage,
+  getImageAsBase64,
+  cropBubbleToBase64,
+  getBubbleAtPoint,
+  getBubbleKey,
+  type BubbleDetection,
+  type DetectionResult,
+} from '@/utils/comic-detector';
 import './style.css';
 
 // Helper to render flag (emoji or SVG image)
@@ -43,6 +52,24 @@ const processedTweets = new WeakSet<Element>();
 const userInfoCache = new LRUCache<string, UserInfo | null>(500);
 const pendingRequests = new Map<string, Promise<UserInfo | null>>();
 const hardActionApplied = new BoundedSet<string>(1000);
+
+// Comic detection caches
+const imageDetectionCache = new Map<string, DetectionResult>();
+const bubbleTranslationCache = new Map<string, string>();
+const processedImages = new WeakSet<Element>();
+const imageTranslationCache = new Map<string, string>(); // For auto mode translated images
+
+// Normalize Twitter image URL (remove size parameters for consistent caching)
+function normalizeTwitterImageUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    // Remove size-related parameters that change between inline and lightbox
+    parsed.searchParams.delete('name');
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
 
 // Settings cache
 let cachedSettings: Settings | null = null;
@@ -113,16 +140,26 @@ export default defineContentScript({
       subtree: true,
     });
 
+    // Set up lightbox observer for comic translation (always set up, check settings when processing)
+    const lightboxObserver = setupLightboxObserver();
+
     // Handle SPA navigation
     ctx.addEventListener(window, 'wxt:locationchange', () => {
       console.log('[XSanctuary] Location changed, reprocessing page');
       setTimeout(() => processPage(), 300);
+
+      // Check if we navigated to a photo URL (lightbox)
+      if (window.location.pathname.includes('/photo/')) {
+        console.log('[XSanctuary] Photo URL detected, checking for lightbox');
+        setTimeout(() => checkForLightboxImage(), 500);
+      }
     });
 
     // Cleanup on context invalidation
     ctx.onInvalidated(() => {
       observer.disconnect();
       themeObserver.disconnect();
+      lightboxObserver?.disconnect();
       browser.storage.onChanged.removeListener(storageListener);
       // Clear pending elements
       pendingElements = [];
@@ -178,6 +215,9 @@ async function processTweet(tweet: Element) {
   if (!cachedSettings?.enabled) return;
   if (processedTweets.has(tweet)) return;
   processedTweets.add(tweet);
+
+  // Process images for comic translation
+  processImagesInTweet(tweet);
 
   // Find the username in this tweet
   const usernameLink = tweet.querySelector('a[href^="/"][role="link"]');
@@ -863,4 +903,609 @@ function hideTooltip() {
     activeTooltip.remove();
     activeTooltip = null;
   }
+}
+
+// ============================================================================
+// Comic Detection & Translation
+// ============================================================================
+
+// Process images in tweets for comic detection
+async function processImagesInTweet(tweet: Element) {
+  if (!cachedSettings?.comicTranslation.enabled) {
+    return;
+  }
+  if (!cachedSettings?.openRouterApiKey) {
+    console.log('[XSanctuary] Comic translation skipped: No API key');
+    return;
+  }
+
+  // Find images in the tweet - only target actual media images, not profile pics
+  // tweetPhoto is the container for tweet images/media
+  const images = tweet.querySelectorAll(
+    'div[data-testid="tweetPhoto"] img, ' +
+    'img[src*="twimg.com/media"]'
+  );
+
+  if (images.length === 0) return;
+
+  console.log(`[XSanctuary] Found ${images.length} images in tweet`);
+
+  // Add a single translate button to the tweet (not per-image)
+  addTweetTranslateButton(tweet, Array.from(images) as HTMLImageElement[]);
+}
+
+// Check for lightbox image when navigating to photo URL
+function checkForLightboxImage() {
+  if (!cachedSettings?.comicTranslation?.enabled) return;
+
+  // Look for lightbox image in various containers
+  const selectors = [
+    '[data-testid="swipe-to-dismiss"] img[src*="twimg.com/media"]',
+    '[aria-label="Image"] img[src*="twimg.com/media"]',
+    '#layers img[src*="twimg.com/media"]',
+  ];
+
+  for (const selector of selectors) {
+    const img = document.querySelector(selector) as HTMLImageElement;
+    if (img && !processedImages.has(img)) {
+      console.log('[XSanctuary] Found lightbox image via URL check:', img.src);
+      processImageForLightbox(img);
+      return;
+    }
+  }
+
+  console.log('[XSanctuary] No lightbox image found yet, will retry...');
+  // Retry a few times as the image might not be loaded yet
+  setTimeout(() => {
+    for (const selector of selectors) {
+      const img = document.querySelector(selector) as HTMLImageElement;
+      if (img && !processedImages.has(img)) {
+        console.log('[XSanctuary] Found lightbox image via retry:', img.src);
+        processImageForLightbox(img);
+        return;
+      }
+    }
+  }, 500);
+}
+
+// Also watch for lightbox/media viewer
+function setupLightboxObserver() {
+  // Twitter's lightbox can appear in #layers or as a swipe-to-dismiss element
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      mutation.addedNodes.forEach((node) => {
+        if (node instanceof Element) {
+          // Look for lightbox images - check multiple selectors
+          // Lightbox uses swipe-to-dismiss container or aria-label="Image"
+          const lightboxContainers = node.querySelectorAll(
+            '[data-testid="swipe-to-dismiss"], [aria-label="Image"]'
+          );
+
+          // Also check if the node itself is a lightbox container
+          if (node.matches('[data-testid="swipe-to-dismiss"], [aria-label="Image"]')) {
+            const img = node.querySelector('img[src*="twimg.com/media"]') as HTMLImageElement;
+            if (img && !processedImages.has(img)) {
+              console.log('[XSanctuary] Found lightbox image (direct match):', img.src);
+              processImageForLightbox(img);
+            }
+          }
+
+          lightboxContainers.forEach((container) => {
+            const img = container.querySelector('img[src*="twimg.com/media"]') as HTMLImageElement;
+            if (img && !processedImages.has(img)) {
+              console.log('[XSanctuary] Found lightbox image:', img.src);
+              processImageForLightbox(img);
+            }
+          });
+
+          // Fallback: check for any media image in the added node
+          const allMediaImgs = node.querySelectorAll('img[src*="twimg.com/media"]');
+          allMediaImgs.forEach((img) => {
+            const imgEl = img as HTMLImageElement;
+            // Only process if it looks like a lightbox (large image, in layers)
+            if (!processedImages.has(imgEl) && imgEl.closest('#layers')) {
+              console.log('[XSanctuary] Found lightbox image (fallback):', imgEl.src);
+              processImageForLightbox(imgEl);
+            }
+          });
+        }
+      });
+    }
+  });
+
+  // Observe both #layers and document.body for lightbox detection
+  const layers = document.querySelector('#layers');
+  if (layers) {
+    console.log('[XSanctuary] Observing #layers for lightbox');
+    observer.observe(layers, { childList: true, subtree: true });
+  } else {
+    // Fallback to body if #layers doesn't exist yet
+    console.log('[XSanctuary] #layers not found, observing body');
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  return observer;
+}
+
+function processImageForLightbox(img: HTMLImageElement) {
+  if (processedImages.has(img)) return;
+
+  // Wait for image to be ready
+  if (img.clientHeight < 50) {
+    const resizeObserver = new ResizeObserver(() => {
+      if (img.clientWidth >= 150 && img.clientHeight >= 150) {
+        resizeObserver.disconnect();
+        applyLightboxTranslation(img);
+      }
+    });
+    resizeObserver.observe(img);
+    return;
+  }
+
+  applyLightboxTranslation(img);
+}
+
+function applyLightboxTranslation(img: HTMLImageElement) {
+  processedImages.add(img);
+
+  // Normalize URL for cache lookup (Twitter uses different size params for inline vs lightbox)
+  const normalizedUrl = normalizeTwitterImageUrl(img.src);
+  console.log('[XSanctuary] Applying lightbox translation, normalized URL:', normalizedUrl);
+  console.log('[XSanctuary] Cache has', imageDetectionCache.size, 'entries');
+
+  // Check if we already have detection results cached for this image URL
+  const cachedResult = imageDetectionCache.get(normalizedUrl);
+
+  if (cachedResult && cachedResult.bubbles.length > 0) {
+    // Auto-apply the overlays since we already translated this image
+    console.log('[XSanctuary] Applying cached translation to lightbox, bubbles:', cachedResult.bubbles.length);
+    addBubbleOverlaysToLightbox(img, normalizedUrl, cachedResult);
+  } else {
+    // No cached results - add translate button
+    console.log('[XSanctuary] No cached results, adding translate button');
+    addLightboxTranslateButton(img);
+  }
+}
+
+function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, detectionResult: DetectionResult) {
+  // Find a suitable container for the lightbox overlay
+  const container = img.parentElement as HTMLElement;
+  if (!container) {
+    console.warn('[XSanctuary] Lightbox: No parent container found for image');
+    return;
+  }
+
+  console.log('[XSanctuary] Lightbox: Adding overlays to container:', container.className);
+  console.log('[XSanctuary] Lightbox: Image dimensions:', img.clientWidth, 'x', img.clientHeight);
+
+  // Ensure container has relative positioning
+  if (getComputedStyle(container).position === 'static') {
+    container.style.position = 'relative';
+    console.log('[XSanctuary] Lightbox: Set container position to relative');
+  }
+
+  // Remove any existing overlays
+  container.querySelectorAll('.xsanctuary-bubble-container').forEach((el) => el.remove());
+
+  // Create overlay container
+  const overlayContainer = document.createElement('div');
+  overlayContainer.className = 'xsanctuary-bubble-container xsanctuary-lightbox-overlay';
+
+  // Create hover zones for each bubble
+  for (const bubble of detectionResult.bubbles) {
+    const overlay = document.createElement('div');
+    overlay.className = 'xsanctuary-bubble-overlay xsanctuary-bubble-fetched'; // Already fetched
+
+    const left = (bubble.x - bubble.width / 2) * 100;
+    const top = (bubble.y - bubble.height / 2) * 100;
+    const width = bubble.width * 100;
+    const height = bubble.height * 100;
+
+    const translationEl = document.createElement('div');
+    translationEl.className = 'xsanctuary-bubble-translation';
+
+    // Check if we have a cached translation for this bubble
+    const cacheKey = getBubbleKey(imageUrl, bubble);
+    const cachedTranslation = bubbleTranslationCache.get(cacheKey);
+
+    if (cachedTranslation) {
+      translationEl.textContent = cachedTranslation;
+    } else {
+      translationEl.innerHTML = '<span class="xsanctuary-bubble-loading">...</span>';
+    }
+
+    overlay.style.cssText = `
+      position: absolute;
+      left: ${left}%;
+      top: ${top}%;
+      width: ${width}%;
+      height: ${height}%;
+      pointer-events: auto;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    `;
+
+    if (bubble.maskPath) {
+      overlay.style.clipPath = bubble.maskPath;
+      translationEl.style.clipPath = bubble.maskPath;
+    } else {
+      overlay.style.borderRadius = '50%';
+    }
+
+    overlay.appendChild(translationEl);
+
+    // Fetch translation if not cached
+    let translationFetched = !!cachedTranslation;
+
+    overlay.addEventListener('mouseenter', async () => {
+      overlay.classList.add('xsanctuary-bubble-active');
+
+      if (!translationFetched) {
+        translationFetched = true;
+        await fetchBubbleTranslation(translationEl, imageUrl, bubble);
+      }
+    });
+
+    overlay.addEventListener('mouseleave', () => {
+      overlay.classList.remove('xsanctuary-bubble-active');
+    });
+
+    overlayContainer.appendChild(overlay);
+  }
+
+  container.appendChild(overlayContainer);
+}
+
+function addLightboxTranslateButton(img: HTMLImageElement) {
+  const container = img.parentElement;
+  if (!container || container.querySelector('.xsanctuary-translate-btn')) return;
+
+  const btn = document.createElement('button');
+  btn.className = 'xsanctuary-translate-btn xsanctuary-lightbox-btn';
+  btn.innerHTML = '<span>🌐 Translate</span>';
+  btn.title = 'Detect & translate speech bubbles';
+
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    btn.classList.add('loading');
+    btn.innerHTML = '<span class="xsanctuary-spinner"></span>';
+
+    try {
+      await detectAndProcessComic(img, img.src);
+      btn.style.display = 'none';
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[XSanctuary] Lightbox detection failed:', errorMessage);
+      btn.innerHTML = '<span>❌</span>';
+      btn.title = `Detection failed: ${errorMessage}`;
+      btn.classList.remove('loading');
+    }
+  });
+
+  container.style.position = 'relative';
+  container.appendChild(btn);
+}
+
+// Add a single translate button to tweet actions area (works on all images)
+function addTweetTranslateButton(tweet: Element, images: HTMLImageElement[]) {
+  // Don't add if already added
+  if (tweet.querySelector('.xsanctuary-tweet-translate-btn')) return;
+
+  // Find the tweet actions bar (like, retweet, share buttons)
+  const actionsBar = tweet.querySelector('[role="group"]');
+  if (!actionsBar) return;
+
+  const btn = document.createElement('button');
+  btn.className = 'xsanctuary-tweet-translate-btn';
+  btn.innerHTML = '🌐';
+  btn.title = `Translate ${images.length} image${images.length > 1 ? 's' : ''}`;
+
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    btn.classList.add('loading');
+    btn.innerHTML = '<span class="xsanctuary-spinner"></span>';
+
+    try {
+      // Process all images in the tweet
+      const results = await Promise.all(
+        images.map(async (img) => {
+          // Wait for image to be ready
+          if (img.clientWidth < 100 || img.clientHeight < 100) {
+            await new Promise<void>((resolve) => {
+              const observer = new ResizeObserver(() => {
+                if (img.clientWidth >= 100 && img.clientHeight >= 100) {
+                  observer.disconnect();
+                  resolve();
+                }
+              });
+              observer.observe(img);
+              setTimeout(() => { observer.disconnect(); resolve(); }, 3000);
+            });
+          }
+          return detectAndProcessComic(img, img.src);
+        })
+      );
+
+      const totalBubbles = results.reduce((sum, r) => sum + (r?.bubbles?.length || 0), 0);
+      if (totalBubbles > 0) {
+        btn.innerHTML = '✓';
+        btn.title = `Found ${totalBubbles} bubble${totalBubbles > 1 ? 's' : ''}`;
+      } else {
+        btn.innerHTML = '∅';
+        btn.title = 'No speech bubbles found';
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[XSanctuary] Tweet translation failed:', errorMessage);
+      btn.innerHTML = '❌';
+      btn.title = `Detection failed: ${errorMessage}`;
+      btn.classList.remove('loading');
+    }
+  });
+
+  actionsBar.appendChild(btn);
+}
+
+async function detectAndProcessComic(img: HTMLImageElement, imageUrl: string): Promise<DetectionResult | null> {
+  const mode = cachedSettings?.comicTranslation.mode || 'bubble';
+  const normalizedUrl = normalizeTwitterImageUrl(imageUrl);
+
+  // Check cache first
+  let detectionResult = imageDetectionCache.get(normalizedUrl);
+
+  if (!detectionResult) {
+    // Run YOLO detection
+    console.log('[XSanctuary] Running comic detection...');
+    detectionResult = await detectBubblesInImage(imageUrl);
+    imageDetectionCache.set(normalizedUrl, detectionResult);
+    console.log(`[XSanctuary] Detected ${detectionResult.bubbles.length} bubbles`);
+  }
+
+  if (detectionResult.bubbles.length === 0) {
+    return detectionResult;
+  }
+
+  if (mode === 'bubble') {
+    // Bubble mode: add hover overlays
+    addBubbleOverlays(img, normalizedUrl, detectionResult);
+  } else {
+    // Auto mode: send whole image for re-rendering
+    await translateFullImageAndReplace(img, normalizedUrl);
+  }
+
+  return detectionResult;
+}
+
+function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionResult: DetectionResult) {
+  const container = img.closest('div[data-testid="tweetPhoto"]') as HTMLElement;
+  if (!container) return;
+
+  // Ensure container has relative positioning for absolute children
+  if (getComputedStyle(container).position === 'static') {
+    container.style.position = 'relative';
+  }
+
+  // Remove any existing overlays
+  container.querySelectorAll('.xsanctuary-bubble-container').forEach((el) => el.remove());
+
+  // Create overlay container that sits on top of the image
+  const overlayContainer = document.createElement('div');
+  overlayContainer.className = 'xsanctuary-bubble-container';
+
+  // Use CSS class for positioning (defined in style.css)
+  // The container is positioned relative to parent with pointer-events: none
+
+  // Create hover zones for each bubble
+  for (const bubble of detectionResult.bubbles) {
+    const overlay = document.createElement('div');
+    overlay.className = 'xsanctuary-bubble-overlay';
+
+    // Calculate position as percentage of image dimensions
+    const left = (bubble.x - bubble.width / 2) * 100;
+    const top = (bubble.y - bubble.height / 2) * 100;
+    const width = bubble.width * 100;
+    const height = bubble.height * 100;
+
+    // Create translation text element (hidden by default)
+    const translationEl = document.createElement('div');
+    translationEl.className = 'xsanctuary-bubble-translation';
+    translationEl.innerHTML = '<span class="xsanctuary-bubble-loading">...</span>';
+
+    overlay.style.cssText = `
+      position: absolute;
+      left: ${left}%;
+      top: ${top}%;
+      width: ${width}%;
+      height: ${height}%;
+      pointer-events: auto;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    `;
+
+    // Apply mask shape if available, otherwise use ellipse
+    if (bubble.maskPath) {
+      overlay.style.clipPath = bubble.maskPath;
+      translationEl.style.clipPath = bubble.maskPath;
+    } else {
+      // Fallback to ellipse shape for speech bubbles
+      overlay.style.borderRadius = '50%';
+    }
+
+    overlay.appendChild(translationEl);
+
+    // Pre-fetch translation on first hover
+    let translationFetched = false;
+
+    overlay.addEventListener('mouseenter', async () => {
+      // Show the translation overlay with fade-in
+      overlay.classList.add('xsanctuary-bubble-active');
+
+      if (!translationFetched) {
+        translationFetched = true;
+        await fetchBubbleTranslation(translationEl, imageUrl, bubble);
+      }
+    });
+
+    overlay.addEventListener('mouseleave', () => {
+      overlay.classList.remove('xsanctuary-bubble-active');
+    });
+
+    overlayContainer.appendChild(overlay);
+  }
+
+  container.appendChild(overlayContainer);
+}
+
+async function fetchBubbleTranslation(translationEl: HTMLElement, imageUrl: string, bubble: BubbleDetection) {
+  const cacheKey = getBubbleKey(imageUrl, bubble);
+  const overlay = translationEl.parentElement;
+
+  // Check cache first
+  let translation = bubbleTranslationCache.get(cacheKey);
+
+  if (translation) {
+    translationEl.textContent = translation;
+    overlay?.classList.add('xsanctuary-bubble-fetched');
+    return;
+  }
+
+  try {
+    const bubbleBase64 = await cropBubbleToBase64(imageUrl, bubble);
+
+    const response = await browser.runtime.sendMessage({
+      type: 'VISION_TRANSLATE_BUBBLE',
+      apiKey: cachedSettings?.openRouterApiKey,
+      model: cachedSettings?.comicTranslation.bubbleModel || 'google/gemini-2.5-flash',
+      bubbleBase64,
+      targetLanguage: cachedSettings?.comicTranslation.targetLanguage || 'en',
+      cacheKey,
+    });
+
+    if (response.error) {
+      console.warn('[XSanctuary] Bubble translation error:', response.error);
+      translationEl.textContent = '⚠️';
+      translationEl.title = response.error;
+    } else {
+      const translatedText = response.text || '[No text]';
+      console.log('[XSanctuary] Bubble translation result:', translatedText);
+      bubbleTranslationCache.set(cacheKey, translatedText);
+      translationEl.textContent = translatedText;
+    }
+    overlay?.classList.add('xsanctuary-bubble-fetched');
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[XSanctuary] Bubble translation failed:', errorMessage);
+    translationEl.textContent = '⚠️';
+    translationEl.title = 'Translation failed';
+    overlay?.classList.add('xsanctuary-bubble-fetched');
+  }
+}
+
+
+async function translateFullImageAndReplace(img: HTMLImageElement, imageUrl: string) {
+  // Check cache first
+  const cachedTranslation = imageTranslationCache.get(imageUrl);
+  if (cachedTranslation) {
+    swapImageWithTranslation(img, cachedTranslation, imageUrl);
+    return;
+  }
+
+  // Show loading overlay
+  const container = img.closest('div[data-testid="tweetPhoto"]') || img.parentElement;
+  if (!container) return;
+
+  const loadingOverlay = document.createElement('div');
+  loadingOverlay.className = 'xsanctuary-image-loading';
+  loadingOverlay.innerHTML = `
+    <div class="xsanctuary-image-loading-content">
+      <span class="xsanctuary-spinner"></span>
+      <span>Translating image...</span>
+    </div>
+  `;
+  container.appendChild(loadingOverlay);
+
+  try {
+    // Get image as base64
+    const imageBase64 = await getImageAsBase64(imageUrl);
+
+    // Send to Gemini Image for translation
+    const response = await browser.runtime.sendMessage({
+      type: 'VISION_TRANSLATE_IMAGE',
+      apiKey: cachedSettings?.openRouterApiKey,
+      imageBase64,
+      targetLanguage: cachedSettings?.comicTranslation.targetLanguage || 'en',
+      cacheKey: `img:${imageUrl}:${cachedSettings?.comicTranslation.targetLanguage}`,
+    });
+
+    loadingOverlay.remove();
+
+    if (response.error) {
+      showToast(`Translation failed: ${response.error}`);
+      return;
+    }
+
+    if (response.imageBase64) {
+      imageTranslationCache.set(imageUrl, response.imageBase64);
+      swapImageWithTranslation(img, response.imageBase64, imageUrl);
+    } else {
+      showToast('No translated image returned');
+    }
+  } catch (error) {
+    loadingOverlay.remove();
+    console.error('[XSanctuary] Image translation failed:', error);
+    showToast('Image translation failed');
+  }
+}
+
+function swapImageWithTranslation(img: HTMLImageElement, translatedBase64: string, originalUrl: string) {
+  const container = img.closest('div[data-testid="tweetPhoto"]') || img.parentElement;
+  if (!container) return;
+
+  // Store original src
+  const originalSrc = img.src;
+
+  // Create toggle button
+  let toggleBtn = container.querySelector('.xsanctuary-toggle-btn') as HTMLButtonElement;
+  if (!toggleBtn) {
+    toggleBtn = document.createElement('button');
+    toggleBtn.className = 'xsanctuary-toggle-btn';
+    toggleBtn.innerHTML = '🔄';
+    toggleBtn.title = 'Toggle original/translated';
+    container.appendChild(toggleBtn);
+  }
+
+  // Set translated image
+  img.src = `data:image/png;base64,${translatedBase64}`;
+  img.dataset.xsanctuaryOriginal = originalSrc;
+  img.dataset.xsanctuaryTranslated = 'true';
+
+  // Toggle handler
+  toggleBtn.onclick = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    if (img.dataset.xsanctuaryTranslated === 'true') {
+      img.src = originalSrc;
+      img.dataset.xsanctuaryTranslated = 'false';
+      toggleBtn.title = 'Show translated';
+    } else {
+      img.src = `data:image/png;base64,${translatedBase64}`;
+      img.dataset.xsanctuaryTranslated = 'true';
+      toggleBtn.title = 'Show original';
+    }
+  };
+
+  showToast('Image translated');
 }

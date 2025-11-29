@@ -11,10 +11,11 @@
   import { Separator } from '$lib/components/ui/separator';
   import * as Card from '$lib/components/ui/card';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import { getSettings, saveSettings, type Settings, type CountryRule, type SoftAction, type HardAction, type Theme } from '@/utils/storage';
+  import { getSettings, saveSettings, type Settings, type CountryRule, type SoftAction, type HardAction, type Theme, type ComicTranslationSettings } from '@/utils/storage';
   import { allLocations, regions, type Country } from '@/utils/country-list';
   import { getCacheStats, clearCache } from '@/utils/cache';
-  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, Settings as SettingsIcon, ChevronDown, ExternalLink, Sun, Moon, Monitor } from 'lucide-svelte';
+  import { SUPPORTED_LANGUAGES, type OpenRouterModel } from '@/utils/vision-llm';
+  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, Settings as SettingsIcon, ChevronDown, ExternalLink, Sun, Moon, Monitor, Languages, Image as ImageIcon } from 'lucide-svelte';
 
   let settings = $state<Settings>({
     rules: [],
@@ -23,6 +24,13 @@
     llmModel: 'x-ai/grok-3-fast:free',
     enabled: true,
     theme: 'system',
+    comicTranslation: {
+      enabled: false,
+      mode: 'bubble',
+      targetLanguage: 'en',
+      triggerMode: 'button',
+      bubbleModel: 'google/gemini-2.5-flash',
+    },
   });
 
   let selectedCountry = $state<Country | undefined>(undefined);
@@ -37,6 +45,22 @@
   let loadingModels = $state(false);
   let modelSearchQuery = $state('');
   let modelComboboxOpen = $state(false);
+
+  // Comic translation settings state
+  let comicSettingsOpen = $state(false);
+  let visionModels = $state<OpenRouterModel[]>([]);
+  let loadingVisionModels = $state(false);
+  let visionModelSearchQuery = $state('');
+  let visionModelComboboxOpen = $state(false);
+
+  const filteredVisionModels = $derived(
+    visionModelSearchQuery.trim() === ''
+      ? visionModels
+      : visionModels.filter(m =>
+          m.name.toLowerCase().includes(visionModelSearchQuery.toLowerCase()) ||
+          m.id.toLowerCase().includes(visionModelSearchQuery.toLowerCase())
+        )
+  );
 
   const filteredModels = $derived(
     modelSearchQuery.trim() === ''
@@ -188,6 +212,54 @@
     settings.llmModel = modelId;
     save();
   }
+
+  // Comic translation functions
+  async function fetchVisionModels() {
+    if (!settings.openRouterApiKey) return;
+
+    loadingVisionModels = true;
+    try {
+      const response = await browser.runtime.sendMessage({
+        type: 'FETCH_OPENROUTER_MODELS',
+        apiKey: settings.openRouterApiKey,
+      });
+
+      if (response.models) {
+        visionModels = response.models;
+        // Ensure default model is in list
+        if (!visionModels.some(m => m.id === 'google/gemini-2.5-flash')) {
+          visionModels.unshift({
+            id: 'google/gemini-2.5-flash',
+            name: 'Gemini 2.5 Flash',
+            pricing: { prompt: '0', completion: '0' },
+            context_length: 128000,
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch vision models:', e);
+    } finally {
+      loadingVisionModels = false;
+    }
+  }
+
+  function updateComicTranslation<K extends keyof ComicTranslationSettings>(
+    key: K,
+    value: ComicTranslationSettings[K]
+  ) {
+    settings.comicTranslation = {
+      ...settings.comicTranslation,
+      [key]: value,
+    };
+    save();
+  }
+
+  // Auto-fetch vision models when dropdown opens
+  $effect(() => {
+    if (visionModelComboboxOpen && settings.openRouterApiKey && visionModels.length === 0) {
+      fetchVisionModels();
+    }
+  });
 
   function getCountryFlag(code: string): string {
     return allLocations.find(c => c.code === code)?.flag || '🏳️';
@@ -521,6 +593,165 @@
           class="h-8 text-xs"
         />
       </div>
+    </Collapsible.Content>
+  </Collapsible.Root>
+
+  <!-- Comic Translation Section -->
+  <Collapsible.Root bind:open={comicSettingsOpen} class="border-t">
+    <Collapsible.Trigger class="flex w-full items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+      <div class="flex items-center gap-2 text-sm">
+        <Languages class="h-4 w-4" />
+        <span>Comic Translation</span>
+        {#if settings.comicTranslation.enabled}
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">On</span>
+        {/if}
+      </div>
+      <ChevronDown class="h-4 w-4 transition-transform {comicSettingsOpen ? 'rotate-180' : ''}" />
+    </Collapsible.Trigger>
+    <Collapsible.Content class="px-3 pb-3 space-y-3">
+      <!-- Enable Toggle -->
+      <div class="flex items-center justify-between">
+        <Label class="text-xs text-muted-foreground">Enable Comic Translation</Label>
+        <Switch
+          checked={settings.comicTranslation.enabled}
+          onCheckedChange={(checked) => updateComicTranslation('enabled', checked)}
+        />
+      </div>
+
+      {#if settings.comicTranslation.enabled}
+        <!-- Target Language -->
+        <div class="space-y-1.5">
+          <Label class="text-xs text-muted-foreground">Target Language</Label>
+          <Select.Root
+            type="single"
+            value={settings.comicTranslation.targetLanguage}
+            onValueChange={(v) => v && updateComicTranslation('targetLanguage', v)}
+          >
+            <Select.Trigger class="h-8 text-xs">
+              {SUPPORTED_LANGUAGES.find(l => l.code === settings.comicTranslation.targetLanguage)?.name || settings.comicTranslation.targetLanguage}
+            </Select.Trigger>
+            <Select.Content>
+              {#each SUPPORTED_LANGUAGES as lang}
+                <Select.Item value={lang.code}>{lang.name}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </div>
+
+        <!-- Mode Selection -->
+        <div class="space-y-1.5">
+          <Label class="text-xs text-muted-foreground">Translation Mode</Label>
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              class="flex flex-col items-center gap-1 p-2 rounded-md border text-xs transition-colors {settings.comicTranslation.mode === 'bubble' ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50'}"
+              onclick={() => updateComicTranslation('mode', 'bubble')}
+            >
+              <span class="text-lg">💬</span>
+              <span class="font-medium">Bubble</span>
+              <span class="text-[10px] text-muted-foreground text-center">Hover to see translation</span>
+            </button>
+            <button
+              class="flex flex-col items-center gap-1 p-2 rounded-md border text-xs transition-colors {settings.comicTranslation.mode === 'auto' ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50'}"
+              onclick={() => updateComicTranslation('mode', 'auto')}
+            >
+              <ImageIcon class="h-5 w-5" />
+              <span class="font-medium">Auto</span>
+              <span class="text-[10px] text-muted-foreground text-center">Re-render whole image</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Trigger Mode -->
+        <div class="space-y-1.5">
+          <Label class="text-xs text-muted-foreground">Trigger</Label>
+          <Select.Root
+            type="single"
+            value={settings.comicTranslation.triggerMode}
+            onValueChange={(v) => v && updateComicTranslation('triggerMode', v as 'button' | 'auto')}
+          >
+            <Select.Trigger class="h-8 text-xs">
+              {settings.comicTranslation.triggerMode === 'button' ? 'Manual (click button)' : 'Automatic (on load)'}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Item value="button">Manual (click button)</Select.Item>
+              <Select.Item value="auto">Automatic (on load)</Select.Item>
+            </Select.Content>
+          </Select.Root>
+        </div>
+
+        <!-- Vision Model Selection (for bubble mode) -->
+        {#if settings.comicTranslation.mode === 'bubble'}
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between">
+              <Label class="text-xs text-muted-foreground">Vision Model</Label>
+              <button
+                type="button"
+                class="text-[10px] text-primary hover:underline disabled:opacity-50"
+                onclick={fetchVisionModels}
+                disabled={loadingVisionModels || !settings.openRouterApiKey}
+              >
+                {loadingVisionModels ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            <Popover.Root bind:open={visionModelComboboxOpen}>
+              <Popover.Trigger class="w-full">
+                <Button variant="outline" class="w-full justify-between h-8 text-xs">
+                  <span class="truncate">
+                    {visionModels.find(m => m.id === settings.comicTranslation.bubbleModel)?.name || settings.comicTranslation.bubbleModel}
+                  </span>
+                  <ChevronsUpDown class="ml-2 h-3 w-3 shrink-0 opacity-50" />
+                </Button>
+              </Popover.Trigger>
+              <Popover.Content class="w-[320px] p-0" align="start">
+                <Command.Root>
+                  <Command.Input
+                    placeholder="Search vision models..."
+                    bind:value={visionModelSearchQuery}
+                    class="h-8 text-xs"
+                  />
+                  <Command.List class="max-h-[200px] overflow-auto">
+                    <Command.Empty>
+                      {#if !settings.openRouterApiKey}
+                        Add API key to load models
+                      {:else if loadingVisionModels}
+                        Loading models...
+                      {:else}
+                        No models found
+                      {/if}
+                    </Command.Empty>
+                    {#each filteredVisionModels as model}
+                      <button
+                        class="relative flex w-full cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-xs outline-none hover:bg-accent"
+                        onclick={() => {
+                          updateComicTranslation('bubbleModel', model.id);
+                          visionModelComboboxOpen = false;
+                          visionModelSearchQuery = '';
+                        }}
+                      >
+                        <Check class="h-3 w-3 {settings.comicTranslation.bubbleModel === model.id ? 'opacity-100' : 'opacity-0'}" />
+                        <span class="truncate">{model.name}</span>
+                      </button>
+                    {/each}
+                  </Command.List>
+                </Command.Root>
+              </Popover.Content>
+            </Popover.Root>
+            <p class="text-[10px] text-muted-foreground">
+              Used for extracting and translating text from speech bubbles
+            </p>
+          </div>
+        {:else}
+          <p class="text-[10px] text-muted-foreground p-2 bg-muted/50 rounded">
+            Auto mode uses Gemini 2.5 Flash Image to re-render the entire comic with translated text
+          </p>
+        {/if}
+
+        {#if !settings.openRouterApiKey}
+          <p class="text-[10px] text-amber-500 p-2 bg-amber-500/10 rounded">
+            Add your OpenRouter API key in Settings to enable comic translation
+          </p>
+        {/if}
+      {/if}
     </Collapsible.Content>
   </Collapsible.Root>
 

@@ -20,5 +20,11 @@ export default defineConfig({
       default_popup: 'popup.html',
       default_title: 'XSanctuary',
     },
+    web_accessible_resources: [
+      {
+        resources: ['wasm/*.wasm', 'wasm/*.mjs'],
+        matches: ['*://*.x.com/*', '*://*.twitter.com/*'],
+      },
+    ],
   },
 });
