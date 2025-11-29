@@ -7,7 +7,8 @@ import {
 } from '@/utils/vision-llm';
 
 // Chrome types for offscreen API (not in standard webextension-polyfill)
-declare const chrome: typeof globalThis.chrome;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const chrome: any;
 
 // Offscreen document management
 let creatingOffscreen: Promise<void> | null = null;
@@ -16,7 +17,6 @@ async function ensureOffscreenDocument() {
   const offscreenUrl = 'offscreen.html';
 
   // Check if offscreen document already exists
-  // @ts-expect-error - chrome.offscreen types may not be available
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
     documentUrls: [chrome.runtime.getURL(offscreenUrl)],

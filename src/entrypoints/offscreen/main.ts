@@ -5,6 +5,10 @@
 
 import * as ort from 'onnxruntime-web';
 
+// Chrome types for offscreen API (not in standard webextension-polyfill)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+declare const chrome: any;
+
 // Types
 interface BubbleDetection {
   x: number;
@@ -484,7 +488,7 @@ async function detectBubbles(
 configureWasm();
 
 // Listen for messages from background script
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender: unknown, sendResponse: (response: unknown) => void) => {
   if (message.target !== 'offscreen') return;
 
   const handleMessage = async () => {
@@ -492,23 +496,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       switch (message.type) {
         case 'YOLO_DETECT': {
           const result = await detectBubbles(
-            message.imageUrl,
-            message.confidenceThreshold || 0.5,
-            message.nmsThreshold || 0.5
+            message.imageUrl as string,
+            (message.confidenceThreshold as number) || 0.5,
+            (message.nmsThreshold as number) || 0.5
           );
           return result;
         }
         case 'YOLO_GET_IMAGE_BASE64': {
-          const base64 = await getImageAsBase64(message.imageUrl);
+          const base64 = await getImageAsBase64(message.imageUrl as string);
           return { base64 };
         }
         case 'YOLO_CROP_BUBBLE': {
           const base64 = await cropBubbleToBase64(
-            message.imageUrl,
-            message.bubble,
-            message.padding || 20,
-            message.originalWidth,
-            message.originalHeight
+            message.imageUrl as string,
+            message.bubble as BubbleDetection,
+            (message.padding as number) || 20,
+            message.originalWidth as number,
+            message.originalHeight as number
           );
           return { base64 };
         }
