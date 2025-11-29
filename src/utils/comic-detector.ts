@@ -69,7 +69,13 @@ async function fetchImageAsBlob(imageUrl: string): Promise<string> {
   try {
     const response = await fetch(imageUrl);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = await response.blob();
+
+    // Read the entire response body as an array buffer first
+    const arrayBuffer = await response.arrayBuffer();
+    console.log(`[XSanctuary] Fetched ${arrayBuffer.byteLength} bytes from ${imageUrl.substring(0, 80)}...`);
+
+    // Create blob from the complete data
+    const blob = new Blob([arrayBuffer], { type: response.headers.get('content-type') || 'image/jpeg' });
     return URL.createObjectURL(blob);
   } catch (e) {
     console.warn('[ComicDetector] Fetch failed, using original URL:', e);
@@ -121,23 +127,44 @@ export async function getImageAsBase64(imageUrl: string): Promise<string> {
 export async function cropBubbleToBase64(
   imageUrl: string,
   bubble: BubbleDetection,
-  padding: number = 20 // Increased padding for better context
+  padding: number = 20, // Increased padding for better context
+  originalWidth?: number, // Original image width from detection
+  originalHeight?: number // Original image height from detection
 ): Promise<string> {
   const blobUrl = await fetchImageAsBlob(imageUrl);
 
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous';
 
-    img.onload = () => {
+    img.onload = async () => {
       try {
-        // Add padding around the bubble
-        const x1 = Math.max(0, bubble.bbox.x1 - padding);
-        const y1 = Math.max(0, bubble.bbox.y1 - padding);
-        const x2 = Math.min(img.width, bubble.bbox.x2 + padding);
-        const y2 = Math.min(img.height, bubble.bbox.y2 + padding);
+        // Wait for image to be fully decoded (not just metadata loaded)
+        if (img.decode) {
+          await img.decode();
+        }
+
+        // Scale bbox if the loaded image has different dimensions than the detection image
+        let scaleX = 1;
+        let scaleY = 1;
+
+        if (originalWidth && originalHeight && (img.width !== originalWidth || img.height !== originalHeight)) {
+          scaleX = img.width / originalWidth;
+          scaleY = img.height / originalHeight;
+          console.log(`[XSanctuary] Scaling crop: detection was ${originalWidth}x${originalHeight}, loaded ${img.width}x${img.height}, scale: ${scaleX.toFixed(2)}x${scaleY.toFixed(2)}`);
+        }
+
+        // Scale and add padding around the bubble
+        const x1 = Math.max(0, (bubble.bbox.x1 * scaleX) - padding);
+        const y1 = Math.max(0, (bubble.bbox.y1 * scaleY) - padding);
+        const x2 = Math.min(img.width, (bubble.bbox.x2 * scaleX) + padding);
+        const y2 = Math.min(img.height, (bubble.bbox.y2 * scaleY) + padding);
 
         const width = x2 - x1;
         const height = y2 - y1;
+
+        console.log(`[XSanctuary] Cropping: original bbox (${bubble.bbox.x1.toFixed(0)},${bubble.bbox.y1.toFixed(0)})-(${bubble.bbox.x2.toFixed(0)},${bubble.bbox.y2.toFixed(0)}), scaled crop (${x1.toFixed(0)},${y1.toFixed(0)})-(${x2.toFixed(0)},${y2.toFixed(0)})`);
+        console.log(`[XSanctuary] Image naturalWidth: ${img.naturalWidth}, naturalHeight: ${img.naturalHeight}, complete: ${img.complete}`);
 
         const canvas = document.createElement('canvas');
         canvas.width = width;

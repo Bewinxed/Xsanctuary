@@ -1,4 +1,4 @@
-import { getLlmCacheKey, getCachedLlmResponse, setCachedLlmResponse } from '@/utils/cache';
+import { getLlmCacheKey, getCachedLlmResponse, setCachedLlmResponse, clearLlmCache } from '@/utils/cache';
 import {
   fetchAvailableModels,
   translateBubbleText,
@@ -36,6 +36,13 @@ export default defineBackground(() => {
         .catch((e) => sendResponse({ error: e.message }));
       return true;
     }
+
+    if (message.type === 'CLEAR_LLM_CACHE') {
+      clearLlmCache()
+        .then(() => sendResponse({ success: true }))
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
   });
 });
 
@@ -56,22 +63,28 @@ async function handleTranslateBubble(message: {
   bubbleBase64: string;
   targetLanguage: string;
   cacheKey?: string;
+  skipCache?: boolean;
 }): Promise<{ text: string; error?: string }> {
-  const { apiKey, model, bubbleBase64, targetLanguage, cacheKey } = message;
+  const { apiKey, model, bubbleBase64, targetLanguage, cacheKey, skipCache } = message;
 
-  // Check cache first
-  if (cacheKey) {
+  // Check cache first (unless skipCache is true)
+  if (cacheKey && !skipCache) {
     const cachedResult = await getCachedLlmResponse(cacheKey);
     if (cachedResult) {
-      console.log('[XSanctuary] Using cached bubble translation');
+      console.log('[XSanctuary] Using cached bubble translation:', cachedResult);
       return { text: cachedResult };
     }
   }
 
+  console.log('[XSanctuary] Calling vision API with model:', model);
+  console.log('[XSanctuary] Image size:', bubbleBase64.length, 'chars');
+
   const result = await translateBubbleText(apiKey, model, bubbleBase64, targetLanguage);
 
-  // Cache successful result
-  if (cacheKey && result.text && !result.error) {
+  console.log('[XSanctuary] Vision API result:', result);
+
+  // Cache successful result (but not error responses like [empty] or [unreadable])
+  if (cacheKey && result.text && !result.error && !result.text.startsWith('[')) {
     await setCachedLlmResponse(cacheKey, result.text);
     console.log('[XSanctuary] Cached bubble translation');
   }

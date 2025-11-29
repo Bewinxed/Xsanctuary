@@ -237,3 +237,11 @@ export async function getLlmCacheStats(): Promise<{ total: number; valid: number
 
   return { total: entries.length, valid };
 }
+
+// Clear only LLM cache
+export async function clearLlmCache(): Promise<void> {
+  llmMemoryCache = {};
+  llmCacheLoaded = false;
+  await llmCacheStorage.setValue({});
+  console.log('[XSanctuary] LLM cache cleared');
+}

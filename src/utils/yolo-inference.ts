@@ -2,7 +2,8 @@ import * as ort from 'onnxruntime-web';
 
 // Configure ONNX Runtime WASM paths for browser extension
 // The WASM files are in public/wasm/ and made web-accessible via manifest
-const wasmBasePath = browser.runtime.getURL('wasm/');
+// @ts-expect-error - 'wasm/' is a valid path but not in PublicPath type
+const wasmBasePath = browser.runtime.getURL('wasm/') as string;
 ort.env.wasm.wasmPaths = wasmBasePath;
 
 // Disable multi-threading as it requires SharedArrayBuffer which needs specific headers
@@ -39,10 +40,10 @@ export interface DetectionResult {
   inferenceTime: number;
 }
 
-// Singleton state
+// Singleton state - use a more robust loading mechanism
 let session: ort.InferenceSession | null = null;
-let isLoading = false;
 let loadingPromise: Promise<ort.InferenceSession> | null = null;
+let sessionError: Error | null = null;
 
 // Progress callback type
 export type DownloadProgressCallback = (progress: number, status: string) => void;
@@ -145,13 +146,17 @@ export async function loadModel(onProgress?: DownloadProgressCallback): Promise<
     return session;
   }
 
-  // Return existing promise if loading
-  if (isLoading && loadingPromise) {
+  // If there was a previous error, throw it
+  if (sessionError) {
+    throw sessionError;
+  }
+
+  // Return existing promise if loading (prevent concurrent initialization)
+  if (loadingPromise) {
     return loadingPromise;
   }
 
-  isLoading = true;
-
+  // Create a new loading promise
   loadingPromise = (async () => {
     try {
       // Try to get cached model first
@@ -175,16 +180,9 @@ export async function loadModel(onProgress?: DownloadProgressCallback): Promise<
       // Configure ONNX Runtime
       onProgress?.(100, 'Initializing inference session...');
 
-      // Try WebGPU first, fall back to WebGL, then WASM
-      const executionProviders: ort.InferenceSession.ExecutionProviderConfig[] = [];
-
-      // Check WebGPU support
-      if ('gpu' in navigator) {
-        executionProviders.push('webgpu');
-      }
-
-      // Add WebGL and WASM as fallbacks
-      executionProviders.push('webgl', 'wasm');
+      // Use only WASM to avoid WebGPU/WebGL session conflicts
+      // WebGPU can cause "session already started" errors with concurrent requests
+      const executionProviders: ort.InferenceSession.ExecutionProviderConfig[] = ['wasm'];
 
       session = await ort.InferenceSession.create(modelData, {
         executionProviders,
@@ -196,9 +194,17 @@ export async function loadModel(onProgress?: DownloadProgressCallback): Promise<
       console.log('[YOLO] Output names:', session.outputNames);
 
       return session;
+    } catch (error) {
+      // Store error to prevent retry loops
+      sessionError = error instanceof Error ? error : new Error(String(error));
+      console.error('[YOLO] Failed to load model:', sessionError);
+      throw sessionError;
     } finally {
-      isLoading = false;
-      loadingPromise = null;
+      // Don't clear loadingPromise on success - keep it so subsequent calls return the same session
+      // Only clear on error so it can be retried
+      if (sessionError) {
+        loadingPromise = null;
+      }
     }
   })();
 
@@ -575,10 +581,18 @@ export async function clearModelCache(): Promise<void> {
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
         session = null;
+        loadingPromise = null;
+        sessionError = null;
         resolve();
       };
     });
   } catch (e) {
     console.warn('[YOLO] Failed to clear model cache:', e);
   }
+}
+
+// Reset session error to allow retry
+export function resetSessionError(): void {
+  sessionError = null;
+  loadingPromise = null;
 }

@@ -1146,7 +1146,7 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
 
       if (!translationFetched) {
         translationFetched = true;
-        await fetchBubbleTranslation(translationEl, imageUrl, bubble);
+        await fetchBubbleTranslation(translationEl, imageUrl, bubble, detectionResult.imageWidth, detectionResult.imageHeight);
       }
     });
 
@@ -1192,6 +1192,24 @@ function addLightboxTranslateButton(img: HTMLImageElement) {
   container.appendChild(btn);
 }
 
+// Clear all translation caches
+async function clearTranslationCaches() {
+  imageDetectionCache.clear();
+  bubbleTranslationCache.clear();
+  imageTranslationCache.clear();
+  // Also clear the persistent LLM cache in background
+  try {
+    await browser.runtime.sendMessage({ type: 'CLEAR_LLM_CACHE' });
+    console.log('[XSanctuary] All translation caches cleared (including persistent LLM cache)');
+  } catch (e) {
+    console.log('[XSanctuary] In-memory caches cleared (LLM cache clear failed)');
+  }
+  showToast('Translation cache cleared');
+}
+
+// Expose to window for debugging
+(window as any).xsanctuaryClearCache = clearTranslationCaches;
+
 // Add a single translate button to tweet actions area (works on all images)
 function addTweetTranslateButton(tweet: Element, images: HTMLImageElement[]) {
   // Don't add if already added
@@ -1204,7 +1222,14 @@ function addTweetTranslateButton(tweet: Element, images: HTMLImageElement[]) {
   const btn = document.createElement('button');
   btn.className = 'xsanctuary-tweet-translate-btn';
   btn.innerHTML = '🌐';
-  btn.title = `Translate ${images.length} image${images.length > 1 ? 's' : ''}`;
+  btn.title = `Translate ${images.length} image${images.length > 1 ? 's' : ''} (right-click to clear cache)`;
+
+  // Right-click to clear cache
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    clearTranslationCaches();
+  });
 
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -1354,7 +1379,7 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
 
       if (!translationFetched) {
         translationFetched = true;
-        await fetchBubbleTranslation(translationEl, imageUrl, bubble);
+        await fetchBubbleTranslation(translationEl, imageUrl, bubble, detectionResult.imageWidth, detectionResult.imageHeight);
       }
     });
 
@@ -1368,7 +1393,13 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
   container.appendChild(overlayContainer);
 }
 
-async function fetchBubbleTranslation(translationEl: HTMLElement, imageUrl: string, bubble: BubbleDetection) {
+async function fetchBubbleTranslation(
+  translationEl: HTMLElement,
+  imageUrl: string,
+  bubble: BubbleDetection,
+  originalWidth?: number,
+  originalHeight?: number
+) {
   const cacheKey = getBubbleKey(imageUrl, bubble);
   const overlay = translationEl.parentElement;
 
@@ -1382,7 +1413,14 @@ async function fetchBubbleTranslation(translationEl: HTMLElement, imageUrl: stri
   }
 
   try {
-    const bubbleBase64 = await cropBubbleToBase64(imageUrl, bubble);
+    const bubbleBase64 = await cropBubbleToBase64(imageUrl, bubble, 20, originalWidth, originalHeight);
+
+    // Debug: Log the cropped image URL (paste in browser address bar to view)
+    console.log('[XSanctuary] Bubble crop for translation:');
+    console.log(`[XSanctuary] Original dimensions: ${originalWidth}x${originalHeight}`);
+    console.log('[XSanctuary] Bubble bbox:', bubble.bbox);
+    console.log('[XSanctuary] Full image URL (copy to view):');
+    console.log(`data:image/png;base64,${bubbleBase64}`);
 
     const response = await browser.runtime.sendMessage({
       type: 'VISION_TRANSLATE_BUBBLE',
