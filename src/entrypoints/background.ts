@@ -4,7 +4,9 @@ import {
   translateBubbleText,
   translateBubbleTextStreaming,
   translateFullImage,
+  detectAllTextRegions,
   type OpenRouterModel,
+  type FullImageOCRResult,
 } from '@/utils/vision-llm';
 
 // Chrome types for offscreen API (not in standard webextension-polyfill)
@@ -94,6 +96,13 @@ export default defineBackground(() => {
       return true;
     }
 
+    if (message.type === 'VISION_FULL_OCR') {
+      handleFullImageOCR(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ regions: [], error: e.message }));
+      return true;
+    }
+
     if (message.type === 'CLEAR_LLM_CACHE') {
       clearLlmCache()
         .then(() => sendResponse({ success: true }))
@@ -120,6 +129,22 @@ export default defineBackground(() => {
       sendToOffscreen(message)
         .then(sendResponse)
         .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
+    // PaddleOCR handler - forward to offscreen document
+    if (message.type === 'PADDLE_OCR') {
+      sendToOffscreen(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
+    // Batch translate OCR text
+    if (message.type === 'BATCH_TRANSLATE_OCR') {
+      handleBatchTranslateOCR(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ translations: [], error: e.message }));
       return true;
     }
   });
@@ -260,6 +285,122 @@ async function handleTranslateImage(message: {
   }
 
   return result;
+}
+
+// Handle full image OCR for text region detection
+async function handleFullImageOCR(message: {
+  apiKey: string;
+  model: string;
+  imageBase64: string;
+  targetLanguage: string;
+}): Promise<FullImageOCRResult> {
+  const { apiKey, model, imageBase64, targetLanguage } = message;
+  return detectAllTextRegions(apiKey, model, imageBase64, targetLanguage);
+}
+
+// Handle batch translation of OCR-detected text
+async function handleBatchTranslateOCR(message: {
+  apiKey: string;
+  model: string;
+  texts: string[];
+  targetLanguage: string;
+  cacheKey?: string;
+}): Promise<{ translations: Array<{ text: string; textColor?: string; bgColor?: string }> }> {
+  const { apiKey, model, texts, targetLanguage, cacheKey } = message;
+
+  // Check cache first
+  if (cacheKey) {
+    const cachedResult = await getCachedLlmResponse(cacheKey);
+    if (cachedResult) {
+      try {
+        return JSON.parse(cachedResult);
+      } catch {
+        // Invalid cache, continue with API call
+      }
+    }
+  }
+
+  const prompt = `You are translating Japanese manga/comic text to ${targetLanguage}.
+You will receive multiple text segments detected by OCR. Translate each one.
+
+IMPORTANT:
+- Keep translations concise - they must fit in small speech bubbles
+- Preserve the tone and emotion of the original
+- For sound effects (onomatopoeia), either translate the meaning or keep the original with a note
+- Return a JSON array with one object per input text
+
+Input texts (one per line):
+${texts.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+
+Return ONLY valid JSON in this exact format:
+{
+  "translations": [
+    {"text": "translated text 1", "textColor": "#000000", "bgColor": "#FFFFFF"},
+    {"text": "translated text 2", "textColor": "#000000", "bgColor": "#FFFFFF"}
+  ]
+}
+
+For textColor and bgColor, use colors appropriate for manga (usually black text on white).
+For sound effects, you might use colored backgrounds.`;
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://github.com/xsanctuary',
+        'X-Title': 'XSanctuary',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'user', content: prompt },
+        ],
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '{}';
+
+    // Parse the JSON response
+    let result: { translations: Array<{ text: string; textColor?: string; bgColor?: string }> };
+    try {
+      result = JSON.parse(content);
+      if (!result.translations || !Array.isArray(result.translations)) {
+        throw new Error('Invalid response format');
+      }
+    } catch {
+      // Fallback: return original texts if parsing fails
+      result = {
+        translations: texts.map(t => ({ text: t, textColor: '#000000', bgColor: '#FFFFFF' })),
+      };
+    }
+
+    // Ensure we have the right number of translations
+    while (result.translations.length < texts.length) {
+      result.translations.push({ text: texts[result.translations.length], textColor: '#000000', bgColor: '#FFFFFF' });
+    }
+
+    // Cache the result
+    if (cacheKey) {
+      await setCachedLlmResponse(cacheKey, JSON.stringify(result));
+    }
+
+    return result;
+  } catch (error) {
+    console.error('[XSanctuary] Batch translate error:', error);
+    // Return original texts on error
+    return {
+      translations: texts.map(t => ({ text: t, textColor: '#000000', bgColor: '#FFFFFF' })),
+    };
+  }
 }
 
 async function handleLlmTransform(

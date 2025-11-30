@@ -32,17 +32,46 @@ interface DetectionResult {
   inferenceTime: number;
 }
 
-// Model configuration
+// Model configuration - YOLO
 const MODEL_URL = 'https://huggingface.co/kitsumed/yolov8m_seg-speech-bubble/resolve/main/model_dynamic.onnx';
 const MODEL_DB_NAME = 'xsanctuary-models';
 const MODEL_STORE_NAME = 'onnx-models';
 const MODEL_KEY = 'speech-bubble-yolov8m';
 const INPUT_SIZE = 640;
 
-// State
+// Model configuration - PaddleOCR
+const PADDLE_DET_URL = 'https://huggingface.co/deepghs/paddleocr/resolve/main/det/ch_PP-OCRv3_det/model.onnx';
+const PADDLE_REC_URL = 'https://huggingface.co/deepghs/paddleocr/resolve/main/rec/japan_PP-OCRv3_rec/model.onnx';
+const PADDLE_DICT_URL = 'https://huggingface.co/deepghs/paddleocr/resolve/main/rec/japan_PP-OCRv3_rec/dict.txt';
+const PADDLE_DET_KEY = 'paddleocr-det-v3';
+const PADDLE_REC_KEY = 'paddleocr-rec-japan-v3';
+const PADDLE_DICT_KEY = 'paddleocr-dict-japan';
+
+// State - YOLO
 let session: ort.InferenceSession | null = null;
 let loadingPromise: Promise<ort.InferenceSession> | null = null;
 let sessionError: Error | null = null;
+
+// State - PaddleOCR
+let paddleDetSession: ort.InferenceSession | null = null;
+let paddleRecSession: ort.InferenceSession | null = null;
+let paddleDict: string[] | null = null;
+let paddleDetLoading: Promise<ort.InferenceSession> | null = null;
+let paddleRecLoading: Promise<ort.InferenceSession> | null = null;
+
+// OCR Result types
+interface TextBox {
+  points: number[][]; // 4 corner points [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+  text: string;
+  confidence: number;
+}
+
+interface OCRResult {
+  boxes: TextBox[];
+  imageWidth: number;
+  imageHeight: number;
+  inferenceTime: number;
+}
 
 // Configure WASM paths on load
 function configureWasm() {
@@ -469,6 +498,406 @@ async function detectBubbles(
   return { bubbles, imageWidth: originalWidth, imageHeight: originalHeight, inferenceTime };
 }
 
+// ============================================================================
+// PaddleOCR Implementation
+// ============================================================================
+
+async function downloadAndCache(url: string, key: string): Promise<ArrayBuffer> {
+  // Check cache first
+  try {
+    const db = await openModelDB();
+    const cached = await new Promise<ArrayBuffer | null>((resolve, reject) => {
+      const transaction = db.transaction(MODEL_STORE_NAME, 'readonly');
+      const store = transaction.objectStore(MODEL_STORE_NAME);
+      const request = store.get(key);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result || null);
+    });
+    if (cached) return cached;
+  } catch {
+    // Continue to download
+  }
+
+  // Download
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
+  const data = await response.arrayBuffer();
+
+  // Cache
+  try {
+    const db = await openModelDB();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(MODEL_STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(MODEL_STORE_NAME);
+      const request = store.put(data, key);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve();
+    });
+  } catch {
+    // Ignore cache errors
+  }
+
+  return data;
+}
+
+async function loadPaddleDict(): Promise<string[]> {
+  if (paddleDict) return paddleDict;
+
+  // Check cache first
+  try {
+    const db = await openModelDB();
+    const cached = await new Promise<string | null>((resolve, reject) => {
+      const transaction = db.transaction(MODEL_STORE_NAME, 'readonly');
+      const store = transaction.objectStore(MODEL_STORE_NAME);
+      const request = store.get(PADDLE_DICT_KEY);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result || null);
+    });
+    if (cached) {
+      paddleDict = cached.split('\n').filter(line => line.trim());
+      return paddleDict;
+    }
+  } catch {
+    // Continue to download
+  }
+
+  // Download
+  const response = await fetch(PADDLE_DICT_URL);
+  if (!response.ok) throw new Error(`Failed to download dict: ${response.status}`);
+  const text = await response.text();
+
+  // Cache
+  try {
+    const db = await openModelDB();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(MODEL_STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(MODEL_STORE_NAME);
+      const request = store.put(text, PADDLE_DICT_KEY);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve();
+    });
+  } catch {
+    // Ignore cache errors
+  }
+
+  paddleDict = text.split('\n').filter(line => line.trim());
+  return paddleDict;
+}
+
+async function loadPaddleDetModel(): Promise<ort.InferenceSession> {
+  if (paddleDetSession) return paddleDetSession;
+  if (paddleDetLoading) return paddleDetLoading;
+
+  paddleDetLoading = (async () => {
+    const modelData = await downloadAndCache(PADDLE_DET_URL, PADDLE_DET_KEY);
+    paddleDetSession = await ort.InferenceSession.create(modelData, {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all',
+    });
+    return paddleDetSession;
+  })();
+
+  return paddleDetLoading;
+}
+
+async function loadPaddleRecModel(): Promise<ort.InferenceSession> {
+  if (paddleRecSession) return paddleRecSession;
+  if (paddleRecLoading) return paddleRecLoading;
+
+  paddleRecLoading = (async () => {
+    const modelData = await downloadAndCache(PADDLE_REC_URL, PADDLE_REC_KEY);
+    paddleRecSession = await ort.InferenceSession.create(modelData, {
+      executionProviders: ['wasm'],
+      graphOptimizationLevel: 'all',
+    });
+    return paddleRecSession;
+  })();
+
+  return paddleRecLoading;
+}
+
+// Preprocess image for PaddleOCR detection
+async function preprocessForDetection(imageUrl: string): Promise<{
+  tensor: ort.Tensor;
+  originalWidth: number;
+  originalHeight: number;
+  resizeRatio: number;
+}> {
+  const response = await fetch(imageUrl);
+  if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+  const blob = await response.blob();
+  const imageBitmap = await createImageBitmap(blob);
+
+  const originalWidth = imageBitmap.width;
+  const originalHeight = imageBitmap.height;
+
+  // Resize to max dimension 960 while maintaining aspect ratio
+  const maxDim = 960;
+  let newWidth = originalWidth;
+  let newHeight = originalHeight;
+  const resizeRatio = Math.min(maxDim / originalWidth, maxDim / originalHeight, 1);
+
+  if (resizeRatio < 1) {
+    newWidth = Math.round(originalWidth * resizeRatio);
+    newHeight = Math.round(originalHeight * resizeRatio);
+  }
+
+  // Make dimensions divisible by 32 (required by PaddleOCR)
+  newWidth = Math.ceil(newWidth / 32) * 32;
+  newHeight = Math.ceil(newHeight / 32) * 32;
+
+  const canvas = new OffscreenCanvas(newWidth, newHeight);
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(imageBitmap, 0, 0, newWidth, newHeight);
+  imageBitmap.close();
+
+  const imageData = ctx.getImageData(0, 0, newWidth, newHeight);
+  const pixels = imageData.data;
+
+  // Normalize: (pixel / 255 - mean) / std
+  const mean = [0.485, 0.456, 0.406];
+  const std = [0.229, 0.224, 0.225];
+  const float32Data = new Float32Array(3 * newWidth * newHeight);
+
+  for (let i = 0; i < newWidth * newHeight; i++) {
+    const pixelIndex = i * 4;
+    float32Data[i] = (pixels[pixelIndex] / 255 - mean[0]) / std[0];
+    float32Data[i + newWidth * newHeight] = (pixels[pixelIndex + 1] / 255 - mean[1]) / std[1];
+    float32Data[i + 2 * newWidth * newHeight] = (pixels[pixelIndex + 2] / 255 - mean[2]) / std[2];
+  }
+
+  return {
+    tensor: new ort.Tensor('float32', float32Data, [1, 3, newHeight, newWidth]),
+    originalWidth,
+    originalHeight,
+    resizeRatio: newWidth / originalWidth,
+  };
+}
+
+// Post-process detection output to get text boxes
+function postProcessDetection(
+  output: ort.Tensor,
+  originalWidth: number,
+  originalHeight: number,
+  resizeRatio: number,
+  threshold: number = 0.3
+): number[][][] {
+  const data = output.data as Float32Array;
+  const [, , height, width] = output.dims;
+
+  // Create binary mask
+  const boxes: number[][][] = [];
+
+  // Find contours in the probability map
+  // Simple approach: find connected components above threshold
+  const visited = new Set<number>();
+  const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      if (visited.has(idx) || data[idx] < threshold) continue;
+
+      // BFS to find connected component
+      const component: { x: number; y: number }[] = [];
+      const queue = [{ x, y }];
+      visited.add(idx);
+
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        component.push(current);
+
+        for (const [dx, dy] of directions) {
+          const nx = current.x + dx;
+          const ny = current.y + dy;
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          const nidx = ny * width + nx;
+          if (visited.has(nidx) || data[nidx] < threshold) continue;
+          visited.add(nidx);
+          queue.push({ x: nx, y: ny });
+        }
+      }
+
+      // Skip small components
+      if (component.length < 10) continue;
+
+      // Get bounding box of component
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of component) {
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+      }
+
+      // Convert to original image coordinates
+      const scaleX = originalWidth / width;
+      const scaleY = originalHeight / height;
+
+      const box = [
+        [minX * scaleX, minY * scaleY],
+        [maxX * scaleX, minY * scaleY],
+        [maxX * scaleX, maxY * scaleY],
+        [minX * scaleX, maxY * scaleY],
+      ];
+
+      boxes.push(box);
+    }
+  }
+
+  return boxes;
+}
+
+// Crop and preprocess text region for recognition
+async function cropForRecognition(
+  imageUrl: string,
+  box: number[][]
+): Promise<ort.Tensor> {
+  const response = await fetch(imageUrl);
+  if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+  const blob = await response.blob();
+  const imageBitmap = await createImageBitmap(blob);
+
+  // Get bounding rect
+  const xs = box.map(p => p[0]);
+  const ys = box.map(p => p[1]);
+  const x1 = Math.max(0, Math.floor(Math.min(...xs)));
+  const y1 = Math.max(0, Math.floor(Math.min(...ys)));
+  const x2 = Math.min(imageBitmap.width, Math.ceil(Math.max(...xs)));
+  const y2 = Math.min(imageBitmap.height, Math.ceil(Math.max(...ys)));
+
+  const cropWidth = x2 - x1;
+  const cropHeight = y2 - y1;
+
+  if (cropWidth <= 0 || cropHeight <= 0) {
+    imageBitmap.close();
+    throw new Error('Invalid crop region');
+  }
+
+  // Resize to height 48 (standard for PaddleOCR recognition)
+  const targetHeight = 48;
+  const targetWidth = Math.max(48, Math.round(cropWidth * targetHeight / cropHeight));
+
+  const canvas = new OffscreenCanvas(targetWidth, targetHeight);
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, targetWidth, targetHeight);
+  ctx.drawImage(imageBitmap, x1, y1, cropWidth, cropHeight, 0, 0, targetWidth, targetHeight);
+  imageBitmap.close();
+
+  const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+  const pixels = imageData.data;
+
+  // Normalize
+  const float32Data = new Float32Array(3 * targetWidth * targetHeight);
+  const mean = 0.5;
+  const std = 0.5;
+
+  for (let i = 0; i < targetWidth * targetHeight; i++) {
+    const pixelIndex = i * 4;
+    float32Data[i] = (pixels[pixelIndex] / 255 - mean) / std;
+    float32Data[i + targetWidth * targetHeight] = (pixels[pixelIndex + 1] / 255 - mean) / std;
+    float32Data[i + 2 * targetWidth * targetHeight] = (pixels[pixelIndex + 2] / 255 - mean) / std;
+  }
+
+  return new ort.Tensor('float32', float32Data, [1, 3, targetHeight, targetWidth]);
+}
+
+// Decode recognition output using CTC
+function decodeRecognition(output: ort.Tensor, dict: string[]): { text: string; confidence: number } {
+  const data = output.data as Float32Array;
+  const [, seqLen, numClasses] = output.dims;
+
+  let text = '';
+  let totalConf = 0;
+  let numChars = 0;
+  let prevIdx = 0;
+
+  for (let t = 0; t < seqLen; t++) {
+    // Find max class at this timestep
+    let maxIdx = 0;
+    let maxVal = -Infinity;
+    for (let c = 0; c < numClasses; c++) {
+      const val = data[t * numClasses + c];
+      if (val > maxVal) {
+        maxVal = val;
+        maxIdx = c;
+      }
+    }
+
+    // CTC decoding: skip blank (index 0) and repeated characters
+    if (maxIdx !== 0 && maxIdx !== prevIdx) {
+      // Index 0 is blank, actual characters start from index 1
+      if (maxIdx - 1 < dict.length) {
+        text += dict[maxIdx - 1];
+        totalConf += Math.exp(maxVal); // Convert from log prob
+        numChars++;
+      }
+    }
+    prevIdx = maxIdx;
+  }
+
+  return {
+    text,
+    confidence: numChars > 0 ? totalConf / numChars : 0,
+  };
+}
+
+// Main OCR function
+async function performOCR(imageUrl: string): Promise<OCRResult> {
+  const startTime = performance.now();
+
+  // Load models in parallel
+  const [detModel, recModel, dict] = await Promise.all([
+    loadPaddleDetModel(),
+    loadPaddleRecModel(),
+    loadPaddleDict(),
+  ]);
+
+  // Run detection
+  const { tensor: detTensor, originalWidth, originalHeight, resizeRatio } = await preprocessForDetection(imageUrl);
+  const detFeeds: Record<string, ort.Tensor> = {};
+  detFeeds[detModel.inputNames[0]] = detTensor;
+  const detResults = await detModel.run(detFeeds);
+  const detOutput = detResults[detModel.outputNames[0]];
+
+  // Get text boxes
+  const textBoxes = postProcessDetection(detOutput, originalWidth, originalHeight, resizeRatio);
+
+  // Recognize text in each box
+  const boxes: TextBox[] = [];
+  for (const box of textBoxes) {
+    try {
+      const recTensor = await cropForRecognition(imageUrl, box);
+      const recFeeds: Record<string, ort.Tensor> = {};
+      recFeeds[recModel.inputNames[0]] = recTensor;
+      const recResults = await recModel.run(recFeeds);
+      const recOutput = recResults[recModel.outputNames[0]];
+
+      const { text, confidence } = decodeRecognition(recOutput, dict);
+
+      if (text.trim()) {
+        boxes.push({
+          points: box,
+          text: text.trim(),
+          confidence,
+        });
+      }
+    } catch {
+      // Skip boxes that fail recognition
+    }
+  }
+
+  const inferenceTime = performance.now() - startTime;
+
+  return {
+    boxes,
+    imageWidth: originalWidth,
+    imageHeight: originalHeight,
+    inferenceTime,
+  };
+}
+
 // Initialize WASM on load
 configureWasm();
 
@@ -500,6 +929,10 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender:
             message.originalHeight as number
           );
           return { base64 };
+        }
+        case 'PADDLE_OCR': {
+          const result = await performOCR(message.imageUrl as string);
+          return result;
         }
         default:
           return { error: 'Unknown message type' };

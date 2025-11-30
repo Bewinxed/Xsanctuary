@@ -29,6 +29,22 @@ export interface ImageGenerationResult {
   error?: string;
 }
 
+export interface TextRegion {
+  x: number; // percentage 0-100
+  y: number;
+  width: number;
+  height: number;
+  text: string;
+  translation: string;
+  textColor?: string;
+  bgColor?: string;
+}
+
+export interface FullImageOCRResult {
+  regions: TextRegion[];
+  error?: string;
+}
+
 // Cache for OpenRouter models
 let modelsCache: OpenRouterModel[] | null = null;
 let modelsCacheTime = 0;
@@ -468,6 +484,106 @@ If you cannot read any text, respond with "[no text found]".`;
     return { text };
   } catch (e) {
     return { text: '', error: e instanceof Error ? e.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Full image OCR - detect ALL text in an image and return regions with translations
+ * Used as fallback when YOLO bubble detection finds nothing
+ */
+export async function detectAllTextRegions(
+  apiKey: string,
+  model: string,
+  imageBase64: string,
+  targetLanguage: string
+): Promise<FullImageOCRResult> {
+  const prompt = `Analyze this manga/comic image and find ALL text, including:
+- Speech bubbles
+- Sound effects (SFX/onomatopoeia)
+- Narration boxes
+- Signs and labels
+- Any other visible text
+
+For each text region, provide:
+- x, y: top-left corner as percentage (0-100) of image dimensions
+- width, height: size as percentage (0-100) of image dimensions
+- text: original text (romanized if needed)
+- translation: translated to ${targetLanguage}
+- textColor: hex color of the text (e.g. "#000000")
+- bgColor: hex color of the background (e.g. "#FFFFFF")
+
+Return ONLY a JSON object with a "regions" array:
+{
+  "regions": [
+    {"x": 10, "y": 20, "width": 15, "height": 10, "text": "こんにちは", "translation": "Hello", "textColor": "#000000", "bgColor": "#FFFFFF"},
+    {"x": 50, "y": 30, "width": 20, "height": 8, "text": "ドキドキ", "translation": "*thump thump*", "textColor": "#FF0000", "bgColor": "#FFFFFF"}
+  ]
+}
+
+If no text is found, return: {"regions": []}
+Be thorough - find ALL visible text in the image.`;
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://github.com/xsanctuary',
+        'X-Title': 'XSanctuary',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:image/png;base64,${imageBase64}`,
+                },
+              },
+            ],
+          },
+        ],
+        max_tokens: 2000,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { regions: [], error: `API error: ${response.status} - ${errorText}` };
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content?.trim() || '';
+
+    // Parse the JSON response
+    try {
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const regions: TextRegion[] = (parsed.regions || []).map((r: TextRegion) => ({
+          x: Number(r.x) || 0,
+          y: Number(r.y) || 0,
+          width: Number(r.width) || 10,
+          height: Number(r.height) || 5,
+          text: r.text || '',
+          translation: r.translation || r.text || '',
+          textColor: r.textColor || '#000000',
+          bgColor: r.bgColor || '#FFFFFF',
+        }));
+        return { regions };
+      }
+    } catch {
+      // JSON parsing failed
+    }
+
+    return { regions: [], error: 'Failed to parse OCR response' };
+  } catch (e) {
+    return { regions: [], error: e instanceof Error ? e.message : 'Unknown error' };
   }
 }
 

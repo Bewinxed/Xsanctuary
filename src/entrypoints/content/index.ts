@@ -1503,17 +1503,19 @@ function addLightboxTranslateButton(img: HTMLImageElement) {
   const btn = document.createElement('button');
   btn.className = 'xsanctuary-translate-btn xsanctuary-lightbox-btn';
   btn.innerHTML = '🌐';
-  btn.title = 'Translate speech bubbles';
+  btn.title = 'Translate speech bubbles (Shift+click for OCR mode)';
 
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
 
+    const forceOCR = e.shiftKey;
+
     btn.classList.add('loading');
     btn.innerHTML = '<span class="xsanctuary-spinner"></span>';
 
     try {
-      const result = await detectAndProcessComic(img, img.src);
+      const result = await detectAndProcessComic(img, img.src, forceOCR);
       if (result && result.bubbles.length > 0) {
         // Apply overlays to lightbox
         const normalizedUrl = normalizeTwitterImageUrl(img.src);
@@ -1521,7 +1523,7 @@ function addLightboxTranslateButton(img: HTMLImageElement) {
         btn.remove();
       } else {
         btn.innerHTML = '∅';
-        btn.title = 'No speech bubbles found';
+        btn.title = 'No text regions found';
         btn.classList.remove('loading');
       }
     } catch (error) {
@@ -1577,7 +1579,7 @@ function addImageTranslateButton(img: HTMLImageElement) {
   const btn = document.createElement('button');
   btn.className = 'xsanctuary-image-translate-btn';
   btn.innerHTML = '🌐';
-  btn.title = 'Translate comic (right-click to clear cache)';
+  btn.title = 'Translate comic (Shift+click for OCR mode, right-click to clear cache)';
 
   // Right-click to clear cache
   btn.addEventListener('contextmenu', (e) => {
@@ -1589,6 +1591,8 @@ function addImageTranslateButton(img: HTMLImageElement) {
   btn.addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
+
+    const forceOCR = e.shiftKey;
 
     btn.classList.add('loading');
     btn.innerHTML = '<span class="xsanctuary-spinner"></span>';
@@ -1608,15 +1612,15 @@ function addImageTranslateButton(img: HTMLImageElement) {
         });
       }
 
-      const result = await detectAndProcessComic(img, img.src);
+      const result = await detectAndProcessComic(img, img.src, forceOCR);
 
       if (result && result.bubbles.length > 0) {
-        btn.innerHTML = '✓';
-        btn.title = `Found ${result.bubbles.length} bubble${result.bubbles.length > 1 ? 's' : ''}`;
+        btn.innerHTML = forceOCR ? '✓+' : '✓';
+        btn.title = `Found ${result.bubbles.length} region${result.bubbles.length > 1 ? 's' : ''}${forceOCR ? ' (OCR mode)' : ''}`;
         btn.classList.add('success');
       } else {
         btn.innerHTML = '∅';
-        btn.title = 'No speech bubbles found';
+        btn.title = 'No text regions found';
       }
       btn.classList.remove('loading');
     } catch (error) {
@@ -1631,19 +1635,204 @@ function addImageTranslateButton(img: HTMLImageElement) {
   container.appendChild(btn);
 }
 
-async function detectAndProcessComic(img: HTMLImageElement, imageUrl: string): Promise<DetectionResult | null> {
+// Calculate IoU (Intersection over Union) between two bubble detections
+function calculateBubbleIoU(a: BubbleDetection, b: BubbleDetection): number {
+  const x1 = Math.max(a.bbox.x1, b.bbox.x1);
+  const y1 = Math.max(a.bbox.y1, b.bbox.y1);
+  const x2 = Math.min(a.bbox.x2, b.bbox.x2);
+  const y2 = Math.min(a.bbox.y2, b.bbox.y2);
+
+  const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const areaA = (a.bbox.x2 - a.bbox.x1) * (a.bbox.y2 - a.bbox.y1);
+  const areaB = (b.bbox.x2 - b.bbox.x1) * (b.bbox.y2 - b.bbox.y1);
+
+  return intersection / (areaA + areaB - intersection);
+}
+
+// Merge overlapping bounding boxes
+function mergeOverlappingBoxes(
+  boxes: Array<{ x1: number; y1: number; x2: number; y2: number; text: string; confidence: number }>,
+  overlapThreshold: number = 0.3
+): Array<{ x1: number; y1: number; x2: number; y2: number; text: string; confidence: number }> {
+  if (boxes.length === 0) return [];
+
+  // Sort by y position (top to bottom), then x (left to right) for reading order
+  const sorted = [...boxes].sort((a, b) => {
+    const yDiff = a.y1 - b.y1;
+    if (Math.abs(yDiff) > 20) return yDiff; // Different lines
+    return a.x1 - b.x1; // Same line, sort by x
+  });
+
+  const merged: typeof boxes = [];
+  const used = new Set<number>();
+
+  for (let i = 0; i < sorted.length; i++) {
+    if (used.has(i)) continue;
+
+    let current = { ...sorted[i] };
+    used.add(i);
+
+    // Find all boxes that overlap with current
+    let foundMerge = true;
+    while (foundMerge) {
+      foundMerge = false;
+      for (let j = 0; j < sorted.length; j++) {
+        if (used.has(j)) continue;
+
+        const other = sorted[j];
+
+        // Check overlap or proximity
+        const overlapX = Math.max(0, Math.min(current.x2, other.x2) - Math.max(current.x1, other.x1));
+        const overlapY = Math.max(0, Math.min(current.y2, other.y2) - Math.max(current.y1, other.y1));
+        const overlapArea = overlapX * overlapY;
+
+        const currentArea = (current.x2 - current.x1) * (current.y2 - current.y1);
+        const otherArea = (other.x2 - other.x1) * (other.y2 - other.y1);
+        const minArea = Math.min(currentArea, otherArea);
+
+        // Merge if significant overlap OR boxes are very close (within 30px)
+        const horizontalGap = Math.max(0, Math.max(current.x1, other.x1) - Math.min(current.x2, other.x2));
+        const verticalGap = Math.max(0, Math.max(current.y1, other.y1) - Math.min(current.y2, other.y2));
+        const isClose = horizontalGap < 30 && verticalGap < 15;
+
+        if (overlapArea / minArea > overlapThreshold || isClose) {
+          // Merge boxes
+          current = {
+            x1: Math.min(current.x1, other.x1),
+            y1: Math.min(current.y1, other.y1),
+            x2: Math.max(current.x2, other.x2),
+            y2: Math.max(current.y2, other.y2),
+            // Combine text in reading order
+            text: current.y1 <= other.y1 ? `${current.text} ${other.text}` : `${other.text} ${current.text}`,
+            confidence: Math.max(current.confidence, other.confidence),
+          };
+          used.add(j);
+          foundMerge = true;
+        }
+      }
+    }
+
+    merged.push(current);
+  }
+
+  return merged;
+}
+
+// PaddleOCR fallback for text detection when YOLO finds no bubbles
+async function performOCRFallback(imageUrl: string): Promise<DetectionResult | null> {
+  try {
+    const response = await browser.runtime.sendMessage({
+      type: 'PADDLE_OCR',
+      imageUrl,
+    });
+
+    if (response.error) {
+      console.warn('[XSanctuary] OCR fallback failed:', response.error);
+      return null;
+    }
+
+    // Convert OCR boxes to intermediate format for merging
+    const rawBoxes = response.boxes.map((box: { points: number[][]; text: string; confidence: number }) => {
+      const xs = box.points.map((p: number[]) => p[0]);
+      const ys = box.points.map((p: number[]) => p[1]);
+      return {
+        x1: Math.min(...xs),
+        y1: Math.min(...ys),
+        x2: Math.max(...xs),
+        y2: Math.max(...ys),
+        text: box.text,
+        confidence: box.confidence,
+      };
+    });
+
+    // Merge overlapping boxes
+    const mergedBoxes = mergeOverlappingBoxes(rawBoxes);
+
+    // Convert to BubbleDetection format with padding
+    const bubbles: BubbleDetection[] = mergedBoxes.map((box) => {
+      let { x1, y1, x2, y2 } = box;
+
+      // Expand bounding box to create bubble-like area around text
+      const boxWidth = x2 - x1;
+      const boxHeight = y2 - y1;
+      const padX = Math.max(boxWidth * 0.4, 15); // 40% or at least 15px
+      const padY = Math.max(boxHeight * 0.6, 12); // 60% vertical
+
+      // Apply padding
+      x1 = Math.max(0, x1 - padX);
+      y1 = Math.max(0, y1 - padY);
+      x2 = Math.min(response.imageWidth, x2 + padX);
+      y2 = Math.min(response.imageHeight, y2 + padY);
+
+      return {
+        x: (x1 + x2) / 2 / response.imageWidth,
+        y: (y1 + y2) / 2 / response.imageHeight,
+        width: (x2 - x1) / response.imageWidth,
+        height: (y2 - y1) / response.imageHeight,
+        confidence: box.confidence,
+        bbox: { x1, y1, x2, y2 },
+        // No maskPath = ellipse mode will be used
+        // Store OCR text for batch translation
+        ocrText: box.text,
+      } as BubbleDetection & { ocrText: string };
+    });
+
+    return {
+      bubbles,
+      imageWidth: response.imageWidth,
+      imageHeight: response.imageHeight,
+      inferenceTime: response.inferenceTime,
+    };
+  } catch (error) {
+    console.error('[XSanctuary] OCR fallback error:', error);
+    return null;
+  }
+}
+
+async function detectAndProcessComic(img: HTMLImageElement, imageUrl: string, forceOCR: boolean = false): Promise<DetectionResult | null> {
   const mode = cachedSettings?.comicTranslation.mode || 'bubble';
   const normalizedUrl = normalizeTwitterImageUrl(imageUrl);
 
+  // Build cache key that includes OCR mode
+  const cacheKey = forceOCR ? `${normalizedUrl}:ocr` : normalizedUrl;
 
   // Check cache first
-  let detectionResult = imageDetectionCache.get(normalizedUrl);
+  let detectionResult = imageDetectionCache.get(cacheKey);
 
   if (!detectionResult) {
     // Run YOLO detection with configurable confidence
     const confidenceThreshold = cachedSettings?.comicTranslation?.confidenceThreshold ?? 0.3;
     detectionResult = await detectBubblesInImage(imageUrl, confidenceThreshold);
-    imageDetectionCache.set(normalizedUrl, detectionResult);
+
+    // Run OCR if forced or if YOLO found no bubbles
+    if (forceOCR || detectionResult.bubbles.length === 0) {
+      const ocrResult = await performOCRFallback(imageUrl);
+      if (ocrResult && ocrResult.bubbles.length > 0) {
+        if (forceOCR && detectionResult.bubbles.length > 0) {
+          // Merge YOLO bubbles with OCR results, avoiding duplicates
+          const mergedBubbles = [...detectionResult.bubbles];
+          for (const ocrBubble of ocrResult.bubbles) {
+            // Check if this OCR box overlaps significantly with any YOLO bubble
+            const isDuplicate = mergedBubbles.some(yoloBubble => {
+              const iou = calculateBubbleIoU(yoloBubble, ocrBubble);
+              return iou > 0.3; // 30% overlap threshold
+            });
+            if (!isDuplicate) {
+              mergedBubbles.push(ocrBubble);
+            }
+          }
+          detectionResult = {
+            ...detectionResult,
+            bubbles: mergedBubbles,
+          };
+        } else {
+          // Just use OCR results
+          detectionResult = ocrResult;
+        }
+      }
+    }
+
+    imageDetectionCache.set(cacheKey, detectionResult);
   }
 
   if (detectionResult.bubbles.length === 0) {
@@ -1677,8 +1866,8 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
   const overlayContainer = document.createElement('div');
   overlayContainer.className = 'xsanctuary-bubble-container';
 
-  // Use CSS class for positioning (defined in style.css)
-  // The container is positioned relative to parent with pointer-events: none
+  // Track overlay elements for batch translation
+  const overlayElements: Array<{ overlay: HTMLElement; translationEl: HTMLElement; bubble: BubbleDetection }> = [];
 
   // Create hover zones for each bubble
   for (const bubble of detectionResult.bubbles) {
@@ -1738,21 +1927,82 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
     });
 
     overlayContainer.appendChild(overlay);
-
-    // Start fetching translation immediately (not on hover)
     overlay.classList.add('xsanctuary-bubble-loading-state');
-    fetchBubbleTranslation(translationEl, imageUrl, bubble, detectionResult.imageWidth, detectionResult.imageHeight)
-      .then(() => {
-        overlay.classList.remove('xsanctuary-bubble-loading-state');
-        overlay.classList.add('xsanctuary-bubble-fetched');
-      })
-      .catch((err) => {
-        console.error('[XSanctuary] Failed to fetch bubble translation:', err);
-        overlay.classList.remove('xsanctuary-bubble-loading-state');
-      });
+
+    overlayElements.push({ overlay, translationEl, bubble });
   }
 
   container.appendChild(overlayContainer);
+
+  // Check if any bubbles have OCR text (batch translate these)
+  const ocrBubbles = overlayElements.filter(el => (el.bubble as BubbleDetection & { ocrText?: string }).ocrText);
+  const yoloBubbles = overlayElements.filter(el => !(el.bubble as BubbleDetection & { ocrText?: string }).ocrText);
+
+  // Batch translate OCR bubbles
+  if (ocrBubbles.length > 0) {
+    const texts = ocrBubbles.map(el => (el.bubble as BubbleDetection & { ocrText: string }).ocrText);
+    const cacheKey = `batch:${imageUrl}:${texts.join('|')}`;
+
+    browser.runtime.sendMessage({
+      type: 'BATCH_TRANSLATE_OCR',
+      apiKey: cachedSettings?.openRouterApiKey,
+      model: cachedSettings?.comicTranslation.bubbleModel || 'google/gemini-2.0-flash-001',
+      texts,
+      targetLanguage: cachedSettings?.comicTranslation.targetLanguage || 'en',
+      cacheKey,
+    }).then((response: { translations: Array<{ text: string; textColor?: string; bgColor?: string }>; error?: string }) => {
+      if (response.error) {
+        console.warn('[XSanctuary] Batch translation error:', response.error);
+      }
+
+      // Apply translations to each bubble
+      ocrBubbles.forEach((el, index) => {
+        const translation = response.translations?.[index];
+        if (translation) {
+          el.translationEl.textContent = translation.text;
+          if (translation.textColor) {
+            el.translationEl.style.color = translation.textColor;
+          }
+          if (translation.bgColor) {
+            el.translationEl.style.backgroundColor = translation.bgColor;
+            if (translation.textColor) {
+              el.translationEl.style.borderColor = translation.textColor;
+            }
+          }
+          // Cache individual translation for lightbox
+          const bubbleKey = getBubbleKey(imageUrl, el.bubble);
+          bubbleTranslationCache.set(bubbleKey, JSON.stringify(translation));
+        } else {
+          // Fallback: show original OCR text
+          el.translationEl.textContent = (el.bubble as BubbleDetection & { ocrText: string }).ocrText;
+        }
+
+        requestAnimationFrame(() => fitTextToBubble(el.translationEl, el.bubble.maskPath));
+        el.overlay.classList.remove('xsanctuary-bubble-loading-state');
+        el.overlay.classList.add('xsanctuary-bubble-fetched');
+      });
+    }).catch((err) => {
+      console.error('[XSanctuary] Batch translation failed:', err);
+      // Fallback: show original OCR text
+      ocrBubbles.forEach(el => {
+        el.translationEl.textContent = (el.bubble as BubbleDetection & { ocrText: string }).ocrText;
+        el.overlay.classList.remove('xsanctuary-bubble-loading-state');
+      });
+    });
+  }
+
+  // Fetch translations for YOLO bubbles individually (need image cropping)
+  for (const el of yoloBubbles) {
+    fetchBubbleTranslation(el.translationEl, imageUrl, el.bubble, detectionResult.imageWidth, detectionResult.imageHeight)
+      .then(() => {
+        el.overlay.classList.remove('xsanctuary-bubble-loading-state');
+        el.overlay.classList.add('xsanctuary-bubble-fetched');
+      })
+      .catch((err) => {
+        console.error('[XSanctuary] Failed to fetch bubble translation:', err);
+        el.overlay.classList.remove('xsanctuary-bubble-loading-state');
+      });
+  }
 }
 
 async function fetchBubbleTranslation(
