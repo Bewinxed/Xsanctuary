@@ -10,6 +10,11 @@ on:
         description: 'Version to release (e.g., 1.0.0)'
         required: true
         type: string
+      publish:
+        description: 'Also submit the uploaded draft for review'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -92,21 +97,150 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Optional: Upload to Chrome Web Store (requires API credentials)
-  # publish-chrome:
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Download artifact
-  #       uses: actions/download-artifact@v4
-  #     - name: Publish to Chrome Web Store
-  #       uses: mnao305/chrome-extension-upload@v5.0.0
-  #       with:
-  #         file-path: xsanctuary-*-chrome.zip
-  #         extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
-  #         client-id: ${{ secrets.CHROME_CLIENT_ID }}
-  #         client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
-  #         refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+  # Uploads to the Chrome Web Store listing.
+  #
+  # This item is opted in to Verified CRX Uploads, so the package must be a
+  # CRX3 signed with our own RSA key. The store verifies that signature, then
+  # repackages with its own key, which is why the extension ID stays the same.
+  # A plain ZIP upload would be rejected.
+  #
+  # Required repo secrets:
+  #   CHROME_CLIENT_ID, CHROME_CLIENT_SECRET, CHROME_REFRESH_TOKEN
+  #   CWS_SIGNING_KEY  (the private key PEM, whole file)
+  #
+  # Without them the job skips rather than fails, so tagging still produces the
+  # GitHub release artifacts.
+  publish-chrome:
+    needs: build
+    runs-on: ubuntu-latest
+
+    env:
+      PUBLISHER_ID: 14d964a6-b900-438b-a471-33cf1af9258a
+      EXTENSION_ID: cfkdbndljmndgmnagcekhfjplieaagbk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Check for credentials
+        id: creds
+        env:
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          SIGNING_KEY: ${{ secrets.CWS_SIGNING_KEY }}
+        run: |
+          if [ -n "$CLIENT_ID" ] && [ -n "$SIGNING_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Store credentials or signing key missing, skipping upload"
+          fi
+
+      - name: Get version
+        if: steps.creds.outputs.present == 'true'
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set version in package.json
+        if: steps.creds.outputs.present == 'true'
+        run: |
+          bun --eval "
+            const pkg = require('./package.json');
+            pkg.version = '${{ steps.version.outputs.version }}';
+            require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2));
+          "
+
+      - name: Build
+        if: steps.creds.outputs.present == 'true'
+        run: bun run build
+
+      - name: Sign package as CRX3
+        if: steps.creds.outputs.present == 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.CWS_SIGNING_KEY }}
+        run: |
+          # Keep the key off the workspace and out of any uploaded artifact
+          KEY_PATH="$(mktemp)"
+          chmod 600 "$KEY_PATH"
+          printf '%s' "$SIGNING_KEY" > "$KEY_PATH"
+          trap 'shred -u "$KEY_PATH" 2>/dev/null || rm -f "$KEY_PATH"' EXIT
+
+          bunx crx3 -p "$KEY_PATH" -o .output/xsanctuary.crx -- .output/chrome-mv3
+
+          # Fail loudly rather than uploading something malformed
+          head -c 4 .output/xsanctuary.crx | grep -q 'Cr24' || {
+            echo "::error::Signed package is not a valid CRX"; exit 1;
+          }
+
+      - name: Upload to Chrome Web Store
+        if: steps.creds.outputs.present == 'true'
+        env:
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(curl -s "https://oauth2.googleapis.com/token" \
+            -d "client_id=$CLIENT_ID" \
+            -d "client_secret=$CLIENT_SECRET" \
+            -d "refresh_token=$REFRESH_TOKEN" \
+            -d "grant_type=refresh_token" | jq -r '.access_token')
+
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "::error::Could not exchange the refresh token for an access token"
+            exit 1
+          fi
+
+          # Verified CRX uploads go up as a raw body, not multipart
+          RESPONSE=$(curl -s --fail-with-body -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "X-Goog-Upload-Protocol: raw" \
+            -H "X-Goog-Upload-File-Name: xsanctuary.crx" \
+            -T .output/xsanctuary.crx \
+            "https://chromewebstore.googleapis.com/upload/v2/publishers/$PUBLISHER_ID/items/$EXTENSION_ID:upload")
+
+          echo "$RESPONSE"
+
+          if echo "$RESPONSE" | jq -e '.uploadState == "FAILURE"' > /dev/null 2>&1; then
+            echo "::error::Upload rejected: $(echo "$RESPONSE" | jq -r '.itemError[]?.error_detail // "unknown"')"
+            exit 1
+          fi
+
+      # Left as a separate, manually triggered step on purpose: the upload above
+      # lands a draft in the dashboard, so the new version can be looked at
+      # before it goes to users. Run the workflow with publish=true to ship it.
+      - name: Submit for review
+        if: steps.creds.outputs.present == 'true' && inputs.publish == true
+        env:
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(curl -s "https://oauth2.googleapis.com/token" \
+            -d "client_id=$CLIENT_ID" \
+            -d "client_secret=$CLIENT_SECRET" \
+            -d "refresh_token=$REFRESH_TOKEN" \
+            -d "grant_type=refresh_token" | jq -r '.access_token')
+
+          curl -s --fail-with-body -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Length: 0" \
+            "https://chromewebstore.googleapis.com/v2/publishers/$PUBLISHER_ID/items/$EXTENSION_ID:publish"
 
   # Optional: Upload to Firefox Add-ons (requires API credentials)
   # publish-firefox:

@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+#
+# Gets a Chrome Web Store API refresh token and stores the three OAuth values
+# as GitHub repo secrets, so releases can upload on their own.
+#
+# Before running this you need a Google Cloud OAuth client:
+#   1. https://console.cloud.google.com/apis/library/chromewebstore.googleapis.com
+#      and enable the Chrome Web Store API
+#   2. APIs & Services > OAuth consent screen: External, add yourself as a
+#      test user (it does not need to be published or verified)
+#   3. APIs & Services > Credentials > Create credentials > OAuth client ID
+#      Application type: Desktop app
+#   4. Copy the client ID and client secret, then run this script
+#
+# Usage: ./scripts/cws-auth
+
+set -euo pipefail
+
+REPO="Bewinxed/Xsanctuary"
+SCOPE="https://www.googleapis.com/auth/chromewebstore"
+PORT=8976
+REDIRECT="http://127.0.0.1:${PORT}"
+
+command -v jq >/dev/null || { echo "This needs jq installed."; exit 1; }
+command -v gh >/dev/null || { echo "This needs the gh CLI installed."; exit 1; }
+
+read -rp "OAuth client ID: " CLIENT_ID
+read -rsp "OAuth client secret: " CLIENT_SECRET
+echo
+
+if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+  echo "Both values are required."
+  exit 1
+fi
+
+AUTH_URL="https://accounts.google.com/o/oauth2/v2/auth"
+AUTH_URL+="?client_id=${CLIENT_ID}"
+AUTH_URL+="&redirect_uri=${REDIRECT}"
+AUTH_URL+="&response_type=code"
+AUTH_URL+="&scope=${SCOPE}"
+# Google only returns a refresh token when both of these are set
+AUTH_URL+="&access_type=offline&prompt=consent"
+
+echo
+echo "Opening Google's consent screen. If it doesn't open, paste this in a browser:"
+echo
+echo "$AUTH_URL"
+echo
+(xdg-open "$AUTH_URL" >/dev/null 2>&1 || true) &
+
+echo "Waiting for the redirect on ${REDIRECT} ..."
+
+# Catch the single redirect Google sends back and pull the code out of it
+CODE=$(python3 - "$PORT" <<'PY'
+import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse, parse_qs
+
+captured = {}
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        params = parse_qs(urlparse(self.path).query)
+        captured.update(params)
+        body = b"<html><body style='font:16px system-ui;padding:3rem'>Done. You can close this tab.</body></html>"
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+server = HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler)
+server.handle_request()
+print(captured.get('code', [''])[0])
+PY
+)
+
+if [ -z "$CODE" ]; then
+  echo "No authorization code came back. Did you approve the request?"
+  exit 1
+fi
+
+echo "Got the code, exchanging it for a refresh token..."
+
+RESPONSE=$(curl -s "https://oauth2.googleapis.com/token" \
+  -d "client_id=${CLIENT_ID}" \
+  -d "client_secret=${CLIENT_SECRET}" \
+  -d "code=${CODE}" \
+  -d "grant_type=authorization_code" \
+  -d "redirect_uri=${REDIRECT}")
+
+REFRESH_TOKEN=$(echo "$RESPONSE" | jq -r '.refresh_token // empty')
+
+if [ -z "$REFRESH_TOKEN" ]; then
+  echo "No refresh token in the response:"
+  echo "$RESPONSE" | jq -r '.error_description // .error // .' 2>/dev/null || echo "$RESPONSE"
+  exit 1
+fi
+
+KEY_PATH="${CWS_KEY_PATH:-$HOME/.config/xsanctuary/cws-signing-key.pem}"
+
+if [ ! -f "$KEY_PATH" ]; then
+  echo "Signing key not found at ${KEY_PATH}."
+  echo "Generate one first, or point CWS_KEY_PATH at it."
+  exit 1
+fi
+
+echo "Storing secrets on ${REPO}..."
+
+gh secret set CHROME_CLIENT_ID     --repo "$REPO" --body "$CLIENT_ID"
+gh secret set CHROME_CLIENT_SECRET --repo "$REPO" --body "$CLIENT_SECRET"
+gh secret set CHROME_REFRESH_TOKEN --repo "$REPO" --body "$REFRESH_TOKEN"
+gh secret set CWS_SIGNING_KEY      --repo "$REPO" < "$KEY_PATH"
+
+echo
+echo "Done. Four secrets are set:"
+echo "  CHROME_CLIENT_ID, CHROME_CLIENT_SECRET, CHROME_REFRESH_TOKEN, CWS_SIGNING_KEY"
+echo
+echo "Releases now upload on their own. Tag one with:"
+echo "  git tag v1.1.0 && git push origin v1.1.0"
