@@ -115,8 +115,12 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      PUBLISHER_ID: 14d964a6-b900-438b-a471-33cf1af9258a
-      EXTENSION_ID: cfkdbndljmndgmnagcekhfjplieaagbk
+      # Neither of these is a credential: the publisher ID appears in the
+      # dashboard URL and the extension ID is public on the store page. They
+      # live in repo variables only because secret scanning keeps flagging the
+      # publisher UUID as a token, which it is not.
+      PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+      EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
 
     steps:
       - name: Checkout
