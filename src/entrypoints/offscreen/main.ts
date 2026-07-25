@@ -4,6 +4,8 @@
  */
 
 import * as ort from 'onnxruntime-web';
+import type { AudioCodec } from 'mediabunny';
+import { extractAudio, probeAudioCodecs, remuxToMp4 } from '@/utils/media-convert';
 
 // Chrome types for offscreen API (not in standard webextension-polyfill)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -898,6 +900,65 @@ async function performOCR(imageUrl: string): Promise<OCRResult> {
   };
 }
 
+// ============================================================================
+// Media download / conversion (mediabunny)
+// ============================================================================
+
+// Blob URLs handed to the downloads API. Chrome resolves them against this
+// document, so they have to stay alive until the download has been queued.
+const pendingObjectUrls = new Set<string>();
+const OBJECT_URL_TTL_MS = 5 * 60 * 1000;
+
+function publishBlob(blob: Blob): string {
+  const url = URL.createObjectURL(blob);
+  pendingObjectUrls.add(url);
+
+  setTimeout(() => {
+    if (pendingObjectUrls.delete(url)) URL.revokeObjectURL(url);
+  }, OBJECT_URL_TTL_MS);
+
+  return url;
+}
+
+function releaseBlob(url: string): void {
+  if (pendingObjectUrls.delete(url)) URL.revokeObjectURL(url);
+}
+
+/** Throttled progress relay — the background worker forwards these to the tab. */
+function makeProgressReporter(jobId: string, tabId?: number) {
+  let lastSent = 0;
+
+  return (ratio: number) => {
+    const now = Date.now();
+    if (ratio < 1 && now - lastSent < 250) return;
+    lastSent = now;
+
+    chrome.runtime
+      .sendMessage({ type: 'MEDIA_JOB_PROGRESS', jobId, tabId, progress: ratio })
+      .catch(() => {
+        // No listener yet, or the tab went away
+      });
+  };
+}
+
+/**
+ * A long conversion can outlive the MV3 service worker's idle timeout, which
+ * would drop the response on the floor. Progress messages reset that timer, so
+ * we top them up with a heartbeat for stretches where mediabunny is quiet
+ * (large initial range requests, mostly).
+ */
+async function withKeepalive<T>(jobId: string, work: () => Promise<T>): Promise<T> {
+  const timer = setInterval(() => {
+    chrome.runtime.sendMessage({ type: 'MEDIA_JOB_KEEPALIVE', jobId }).catch(() => {});
+  }, 15_000);
+
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 // Initialize WASM on load
 configureWasm();
 
@@ -933,6 +994,36 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender:
         case 'PADDLE_OCR': {
           const result = await performOCR(message.imageUrl as string);
           return result;
+        }
+        case 'AUDIO_CAPABILITIES': {
+          const codecs = await probeAudioCodecs();
+          return { codecs };
+        }
+        case 'EXTRACT_AUDIO': {
+          const jobId = message.jobId as string;
+          const { blob, mimeType } = await withKeepalive(jobId, () =>
+            extractAudio(
+              message.url as string,
+              (message.codec as AudioCodec | null) ?? null,
+              (message.bitrate as number) || 128_000,
+              makeProgressReporter(jobId, message.tabId as number | undefined)
+            )
+          );
+          return { objectUrl: publishBlob(blob), mimeType, size: blob.size };
+        }
+        case 'REMUX_VIDEO': {
+          const jobId = message.jobId as string;
+          const { blob, mimeType } = await withKeepalive(jobId, () =>
+            remuxToMp4(
+              message.url as string,
+              makeProgressReporter(jobId, message.tabId as number | undefined)
+            )
+          );
+          return { objectUrl: publishBlob(blob), mimeType, size: blob.size };
+        }
+        case 'RELEASE_BLOB': {
+          releaseBlob(message.objectUrl as string);
+          return { success: true };
         }
         default:
           return { error: 'Unknown message type' };

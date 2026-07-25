@@ -14,7 +14,7 @@ export default defineConfig({
   manifest: {
     name: 'XSanctuary',
     description: 'Show country flags for Twitter/X users based on their location',
-    permissions: ['storage', 'offscreen'],
+    permissions: ['storage', 'offscreen', 'downloads'],
     host_permissions: ['*://*.x.com/*', '*://*.twitter.com/*', '*://*.twimg.com/*'],
     action: {
       default_popup: 'popup.html',

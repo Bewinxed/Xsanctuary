@@ -31,6 +31,14 @@ export interface ComicTranslationSettings {
   bubbleShape: BubbleShapeMode; // Shape of translation overlay
 }
 
+export type DefaultAudioFormat = 'm4a' | 'mp3' | 'opus' | 'wav';
+
+export interface VideoDownloadSettings {
+  enabled: boolean;
+  rightClickMenu: boolean; // Right-clicking the player opens the format menu
+  defaultAudioFormat: DefaultAudioFormat;
+}
+
 export interface Settings {
   rules: CountryRule[];
   openRouterApiKey: string;
@@ -39,6 +47,7 @@ export interface Settings {
   enabled: boolean;
   theme: Theme;
   comicTranslation: ComicTranslationSettings;
+  videoDownload: VideoDownloadSettings;
 }
 
 const defaultComicTranslationSettings: ComicTranslationSettings = {
@@ -51,6 +60,12 @@ const defaultComicTranslationSettings: ComicTranslationSettings = {
   bubbleShape: 'mask', // Default to using actual detected bubble shape
 };
 
+const defaultVideoDownloadSettings: VideoDownloadSettings = {
+  enabled: true,
+  rightClickMenu: true,
+  defaultAudioFormat: 'm4a',
+};
+
 const defaultSettings: Settings = {
   rules: [],
   openRouterApiKey: '',
@@ -59,6 +74,7 @@ const defaultSettings: Settings = {
   enabled: true,
   theme: 'system',
   comicTranslation: defaultComicTranslationSettings,
+  videoDownload: defaultVideoDownloadSettings,
 };
 
 // Storage items
@@ -90,6 +106,10 @@ export async function getSettings(): Promise<Settings> {
     comicTranslation: {
       ...defaultComicTranslationSettings,
       ...(stored?.comicTranslation || {}),
+    },
+    videoDownload: {
+      ...defaultVideoDownloadSettings,
+      ...(stored?.videoDownload || {}),
     },
   };
 
@@ -145,4 +165,20 @@ export async function updateComicTranslationSettings(
 export async function getComicTranslationSettings(): Promise<ComicTranslationSettings> {
   const settings = await getSettings();
   return settings.comicTranslation;
+}
+
+export async function updateVideoDownloadSettings(
+  updates: Partial<VideoDownloadSettings>
+): Promise<void> {
+  const settings = await getSettings();
+  settings.videoDownload = {
+    ...settings.videoDownload,
+    ...updates,
+  };
+  await saveSettings(settings);
+}
+
+export async function getVideoDownloadSettings(): Promise<VideoDownloadSettings> {
+  const settings = await getSettings();
+  return settings.videoDownload;
 }

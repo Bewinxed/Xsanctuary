@@ -12,6 +12,11 @@ import {
   type BubbleDetection,
   type DetectionResult,
 } from '@/utils/comic-detector';
+import {
+  handleVideoDownloadMessage,
+  initVideoDownloads,
+  processVideos,
+} from '@/utils/video-download';
 import './style.css';
 
 // Helper to render flag (emoji or SVG image)
@@ -357,6 +362,16 @@ export default defineContentScript({
     // Set up lightbox observer for comic translation (always set up, check settings when processing)
     const lightboxObserver = setupLightboxObserver();
 
+    // Video/audio downloading: registry of media captured by the MAIN-world
+    // sniffer, plus the hover button on each player.
+    const teardownVideoDownloads = await initVideoDownloads();
+    processVideos();
+
+    const mediaJobListener = (message: { type?: string; jobId?: string; progress?: number }) => {
+      handleVideoDownloadMessage(message);
+    };
+    browser.runtime.onMessage.addListener(mediaJobListener);
+
     // Handle SPA navigation
     ctx.addEventListener(window, 'wxt:locationchange', () => {
       setTimeout(() => processPage(), 300);
@@ -373,6 +388,8 @@ export default defineContentScript({
       themeObserver.disconnect();
       lightboxObserver?.disconnect();
       browser.storage.onChanged.removeListener(storageListener);
+      browser.runtime.onMessage.removeListener(mediaJobListener);
+      teardownVideoDownloads();
       // Clear pending elements
       pendingElements = [];
       processingScheduled = false;
@@ -381,6 +398,9 @@ export default defineContentScript({
 });
 
 function processPage() {
+  // Video downloading has its own toggle and works independently of country rules
+  processVideos();
+
   if (!cachedSettings?.enabled) return;
 
   // Find all username links and tweets
@@ -389,6 +409,8 @@ function processPage() {
 }
 
 function processElement(element: Element) {
+  processVideos(element);
+
   if (!cachedSettings?.enabled) return;
 
   // Find username links (those starting with @)

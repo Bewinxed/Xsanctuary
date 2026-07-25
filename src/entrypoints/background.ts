@@ -38,8 +38,10 @@ async function ensureOffscreenDocument() {
   // Create the offscreen document
   creatingOffscreen = chrome.offscreen.createDocument({
     url: offscreenUrl,
-    reasons: [chrome.offscreen.Reason.WORKERS],
-    justification: 'Run YOLO ML inference for comic bubble detection',
+    // BLOBS covers the media conversion path, which builds the converted file
+    // as a Blob before handing its URL to the downloads API.
+    reasons: [chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.BLOBS],
+    justification: 'Run ML inference for comic bubble detection and convert downloaded media',
   });
 
   await creatingOffscreen;
@@ -147,8 +149,124 @@ export default defineBackground(() => {
         .catch((e) => sendResponse({ translations: [], error: e.message }));
       return true;
     }
+
+    // ---- Video / audio downloading ----
+
+    // Progress relay: emitted by the offscreen document, consumed by the tab
+    // that started the job.
+    // Heartbeat from the offscreen document during a long conversion. It exists
+    // purely to keep this service worker from idling out mid-job.
+    if (message.type === 'MEDIA_JOB_KEEPALIVE') {
+      return;
+    }
+
+    if (message.type === 'MEDIA_JOB_PROGRESS') {
+      if (typeof message.tabId === 'number') {
+        browser.tabs
+          .sendMessage(message.tabId, {
+            type: 'MEDIA_JOB_PROGRESS',
+            jobId: message.jobId,
+            progress: message.progress,
+          })
+          .catch(() => {
+            // Tab closed or navigated away
+          });
+      }
+      return;
+    }
+
+    if (message.type === 'AUDIO_CAPABILITIES') {
+      sendToOffscreen({ type: 'AUDIO_CAPABILITIES' })
+        .then(sendResponse)
+        .catch((e) => sendResponse({ codecs: {}, error: e.message }));
+      return true;
+    }
+
+    if (message.type === 'DOWNLOAD_MEDIA') {
+      downloadDirect(message.url, message.filename)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
+    if (message.type === 'EXTRACT_AUDIO' || message.type === 'REMUX_VIDEO') {
+      handleMediaConversion(message, sender.tab?.id)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
   });
 });
+
+// ============================================================================
+// Media downloads
+// ============================================================================
+
+/**
+ * Straight pass-through to the downloads API. Progressive MP4 variants need no
+ * processing, so this never buffers the file in extension memory.
+ */
+async function downloadDirect(url: string, filename: string): Promise<{ downloadId?: number; error?: string }> {
+  try {
+    const downloadId = await browser.downloads.download({ url, filename, saveAs: false });
+    return { downloadId };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Runs a conversion in the offscreen document, then saves the resulting blob.
+ * The blob URL belongs to the offscreen document, so we ask it to revoke the
+ * URL once the download has left the queue.
+ */
+async function handleMediaConversion(
+  message: { type: string; jobId: string; url: string; filename: string; codec?: string | null; bitrate?: number },
+  tabId?: number
+): Promise<{ downloadId?: number; error?: string }> {
+  const result = await sendToOffscreen({
+    type: message.type,
+    jobId: message.jobId,
+    tabId,
+    url: message.url,
+    codec: message.codec ?? null,
+    bitrate: message.bitrate,
+  });
+
+  if (!result || result.error) {
+    return { error: result?.error || 'Conversion failed' };
+  }
+
+  const objectUrl = result.objectUrl as string;
+
+  try {
+    const downloadId = await browser.downloads.download({
+      url: objectUrl,
+      filename: message.filename,
+      saveAs: false,
+    });
+
+    releaseWhenSettled(downloadId, objectUrl);
+    return { downloadId };
+  } catch (error) {
+    void sendToOffscreen({ type: 'RELEASE_BLOB', objectUrl }).catch(() => {});
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Frees the converted blob as soon as the download finishes or fails. */
+function releaseWhenSettled(downloadId: number, objectUrl: string): void {
+  const onChanged = (delta: { id: number; state?: { current?: string } }) => {
+    if (delta.id !== downloadId) return;
+    const state = delta.state?.current;
+    if (state !== 'complete' && state !== 'interrupted') return;
+
+    browser.downloads.onChanged.removeListener(onChanged);
+    void sendToOffscreen({ type: 'RELEASE_BLOB', objectUrl }).catch(() => {});
+  };
+
+  browser.downloads.onChanged.addListener(onChanged);
+}
 
 // Handle fetching available models from OpenRouter
 async function handleFetchModels(apiKey: string): Promise<{ models?: OpenRouterModel[]; error?: string }> {

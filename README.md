@@ -2,9 +2,7 @@
 
 # XSanctuary
 
-**The ultimate X (Twitter) enhancement extension**
-
-Location-aware moderation. Real-time comic translation. AI-powered content transformation.
+A browser extension for X (Twitter) that shows where accounts are based, translates comics in your timeline, and downloads videos.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/Bewinxed/xsanctuary?label=release)](https://github.com/Bewinxed/xsanctuary/releases/latest)
@@ -20,10 +18,11 @@ Location-aware moderation. Real-time comic translation. AI-powered content trans
 
 ## What is XSanctuary?
 
-XSanctuary is a powerful browser extension that enhances your X (Twitter) experience with two major feature sets:
+XSanctuary adds three things to X:
 
-1. **Location Intelligence** - See where users really are, detect VPNs, identify deceptive profiles, and filter content by geography
-2. **Comic Translation** - Automatically detect and translate speech bubbles in manga, comics, and webtoons directly in your timeline
+1. Location data on accounts, so you can see where someone is actually posting from, spot VPN use, and filter your timeline by country
+2. Comic translation, which detects speech bubbles in images and translates them in place
+3. Video and audio downloads, with a format picker on every video and GIF
 
 ![XSanctuary in action](screenshots/banner.png)
 
@@ -31,293 +30,270 @@ XSanctuary is a powerful browser extension that enhances your X (Twitter) experi
 
 ## Features
 
-### Comic & Manga Translation
+### Video and audio downloads
 
-Translate comics, manga, and webtoons directly in your Twitter timeline using AI-powered OCR and translation.
+Hover any video or GIF in your timeline and a download button appears in the corner. Click it (or right-click the player) to get a menu of everything X is actually serving for that clip.
 
-#### How It Works
+The menu lists every resolution X has, with bitrate and an estimated file size, so you can grab the 1080p copy or the small one depending on what you need. Below that are audio options, which pull the soundtrack out of the video without downloading a video file you'd only throw away.
 
-1. **YOLO Detection** - On-device ML model (`yolov8m_seg-speech-bubble`) detects speech bubbles in images
-2. **Smart Cropping** - Each bubble is extracted with its exact shape (segmentation mask)
-3. **Vision LLM Translation** - Bubbles are sent to a vision-capable LLM for OCR + translation
-4. **Overlay Display** - Translations appear as styled overlays matching the original bubble shape
+| Audio format | What it does |
+|--------------|--------------|
+| M4A | Copies the original AAC track. No re-encoding, so it's lossless and near instant. |
+| MP3 | 192 kbps, encoded locally with LAME. |
+| Opus | 128 kbps. Smallest file for the same quality. |
+| WAV | Uncompressed. Large files. |
 
-#### Translation Modes
+Some videos, mostly long ones and broadcasts, are only served as adaptive HLS streams with no plain MP4 to grab. Those get a "best available" option that pulls the stream down and remuxes it into an MP4 locally.
 
-| Mode | Description |
-|------|-------------|
-| **Bubble Mode** | Hover over detected bubbles to see translations. Original image stays intact. |
-| **Auto Mode** | Full image re-rendering with translated text (requires image-generation model) |
+Everything happens in your browser. No download service, no upload, no third party sees which videos you save.
 
-#### Key Features
+#### How it finds the formats
 
-- **On-device detection** - YOLO runs locally in your browser using ONNX Runtime (WebAssembly)
-- **Streaming translations** - See text appear character-by-character as the LLM responds
-- **Shape-aware overlays** - Bubbles can use the actual detected mask shape, not just ellipses
-- **Color matching** - LLM detects original text/background colors and applies them to translations
-- **Automatic caching** - Translations are cached to avoid re-processing the same images
-- **Lightbox support** - Works in both timeline view and full-screen image viewer
-- **Configurable confidence** - Adjust detection sensitivity (0.1 - 1.0)
+X hands the `<video>` element a `blob:` URL, so the page itself gives away nothing about the real files. The format list has to come from X's own API responses.
 
-#### Supported Languages
+Rather than replicating X's GraphQL query IDs, which rotate constantly and break every few weeks, XSanctuary reads the responses the page is already fetching. A small script runs in the page's own JavaScript context, watches `fetch` and `XMLHttpRequest`, and picks the variant URLs out of any response that contains video metadata. Nothing extra is requested, and there's nothing to keep updated when X changes its query IDs.
 
-Translates from Japanese, Korean, Chinese, and other languages to:
-English, Spanish, French, German, Italian, Portuguese, Russian, Arabic, Thai, Vietnamese, Indonesian, and more.
+Conversion runs in an offscreen document using [mediabunny](https://mediabunny.dev), which reads and writes media formats in pure TypeScript with no server round trip.
+
+> **Chrome only.** This feature needs a content script running in the page's main world, which requires Manifest V3. The Firefox build is MV2, so the download button doesn't appear there.
 
 ---
 
-### Location Intelligence
+### Comic and manga translation
 
-Reveal the true geographic location of X users by leveraging X's location API.
+Translates comics, manga, and webtoons in your timeline using on-device detection and a vision model for the text.
 
-#### Location Badges
+#### How it works
 
-Country flags appear next to usernames with visual indicators:
+1. A YOLO model (`yolov8m_seg-speech-bubble`) runs locally and finds speech bubbles in the image
+2. Each bubble is cropped using its segmentation mask, so the crop follows the actual bubble shape
+3. The crop goes to a vision-capable LLM for OCR and translation
+4. The translation is drawn back over the original bubble
 
-| Badge Type | Appearance | Description |
-|------------|------------|-------------|
-| **Standard** | Blue border | Verified user location |
-| **VPN** | Dashed orange border | User may be using VPN/proxy |
-| **Deceptive** | Red border | Profile flags don't match actual location |
+#### Translation modes
+
+| Mode | Description |
+|------|-------------|
+| Bubble | Hover a detected bubble to see its translation. The original image is untouched. |
+| Auto | Re-renders the whole image with translated text. Needs an image-generation model. |
+
+Detection runs locally through ONNX Runtime on WebAssembly, so images are never uploaded for that step. Translations stream in character by character as the model responds, and get cached so the same image isn't processed twice. Overlays can follow the detected mask shape rather than a plain ellipse, and pick up the original text and background colors. It works in the timeline and in the full-screen image viewer. Detection sensitivity is adjustable from 0.1 to 1.0.
+
+#### Supported languages
+
+Translates from Japanese, Korean, Chinese and others into English, Spanish, French, German, Italian, Portuguese, Russian, Arabic, Thai, Vietnamese, Indonesian, and more.
+
+---
+
+### Location intelligence
+
+Shows where X users are actually based, using X's own location API.
+
+#### Location badges
+
+Country flags appear next to usernames:
+
+| Badge type | Appearance | Meaning |
+|------------|------------|---------|
+| Standard | Blue border | Location as reported by X |
+| VPN | Dashed orange border | X flagged the location as inaccurate |
+| Deceptive | Red border | Flags in the profile don't match the actual location |
 
 ![Badge types](screenshots/badges.png)
 
-#### Content Actions
+#### Content actions
 
-Apply different actions to content from specific countries:
-
-| Action | Effect |
-|--------|--------|
-| **Hide** | Completely remove tweets from your timeline |
-| **Blur** | Blur content with click-to-reveal functionality |
-| **UwU** | Transform text into UwU speak |
-| **Cat** | Transform text into cat speak (nya~) |
-| **LLM** | AI-powered text transformation via OpenRouter |
-
-#### User Actions
-
-Automatically apply account-level actions:
+Per-country rules for what happens to matching tweets:
 
 | Action | Effect |
 |--------|--------|
-| **Mute** | Auto-mute users from selected countries |
-| **Block** | Auto-block users from selected countries |
+| Hide | Removes the tweet from your timeline |
+| Blur | Blurs it, click to reveal |
+| UwU | Rewrites the text into UwU speak |
+| Cat | Rewrites the text into cat speak (nya~) |
+| LLM | Rewrites the text with a model via OpenRouter |
 
-#### Smart Filters
+#### User actions
 
-Fine-tune when rules apply:
+| Action | Effect |
+|--------|--------|
+| Mute | Auto-mutes accounts from selected countries |
+| Block | Auto-blocks accounts from selected countries |
 
-- **VPN Only** - Only trigger when VPN/proxy is detected
-- **Deception Only** - Only trigger when profile flags don't match actual location
+#### Filters
 
-#### Inline Controls
+Rules can be narrowed to fire only when a VPN is detected, or only when the profile's flags contradict the reported location.
 
-Blurred content shows action buttons directly in the tweet header:
+#### Inline controls
 
-- **Reveal** - Show the original content
-- **Pause 1h** - Temporarily disable the rule
-- **Allow** - Permanently whitelist this user
+Blurred tweets get buttons in the header to reveal the content, pause the rule for an hour, or whitelist that account permanently.
 
 ![Blur controls](screenshots/blur-actions.png)
 
 ---
 
-### AI Text Transformation
+### AI text transformation
 
-Transform tweet content using any LLM via OpenRouter:
-
-- **Real-time streaming** - See text appear as the LLM generates it
-- **Custom prompts** - Set global or per-country transformation prompts
-- **Context-aware** - Transformations include user metadata (country, VPN status, deception info)
-- **Automatic caching** - Responses cached for 24 hours
-- **100+ models** - Access GPT-4, Claude, Gemini, Llama, and more through OpenRouter
+Rewrites tweet text through any model on OpenRouter. Text streams in as the model generates it. Prompts can be set globally or per country, and the transformation gets the user's metadata (country, VPN status, deception flags) as context. Responses are cached for 24 hours.
 
 ---
 
-## Extension Popup
+## Extension popup
 
 <p align="center">
   <img src="screenshots/popup-dark.png" alt="Popup Dark Mode" width="380" />
 </p>
 
-The popup provides quick access to:
-
-- **Enable/disable toggle** - Turn the extension on/off
-- **Country rules** - Add, edit, and remove location-based rules
-- **Comic translation settings** - Configure bubble detection and translation
-- **API key management** - Set your OpenRouter API key
-- **Model selection** - Choose LLM models for text and vision tasks
-- **Theme toggle** - Light, dark, or system theme
+The popup handles the on/off toggle, country rules, comic translation settings, video download settings, your OpenRouter API key, model selection, and the light/dark/system theme.
 
 ---
 
 ## Installation
 
-### From GitHub Releases (Recommended)
+### From GitHub releases
 
-Download the latest release from the [**Releases page**](https://github.com/Bewinxed/xsanctuary/releases/latest).
+Download the latest build from the [releases page](https://github.com/Bewinxed/xsanctuary/releases/latest).
 
 #### Chrome / Edge / Brave
 
 1. Download `xsanctuary-x.x.x-chrome.zip`
-2. Extract the zip file to a folder
-3. Navigate to `chrome://extensions`
-4. Enable **Developer mode** (top right toggle)
+2. Extract it to a folder
+3. Go to `chrome://extensions`
+4. Turn on **Developer mode** (top right)
 5. Click **Load unpacked**
 6. Select the extracted folder
 
 #### Firefox
 
 1. Download `xsanctuary-x.x.x-firefox.zip`
-2. Navigate to `about:debugging#/runtime/this-firefox`
+2. Go to `about:debugging#/runtime/this-firefox`
 3. Click **Load Temporary Add-on**
-4. Select the downloaded zip file
+4. Select the zip
 
-> **Note:** For permanent Firefox installation, the extension needs to be signed by Mozilla.
+> A permanent Firefox install needs the extension signed by Mozilla. Note that comic translation and video downloads are Chrome only, because both rely on APIs the MV2 Firefox build doesn't have.
 
-### From Source
+### From source
 
 ```bash
-# Clone the repository
 git clone https://github.com/Bewinxed/xsanctuary.git
 cd xsanctuary
 
-# Install dependencies
 bun install
 
-# Build for Chrome
-bun run build
+bun run build          # Chrome
+bun run build:firefox  # Firefox
 
-# Build for Firefox
-bun run build:firefox
-
-# Create distributable zips
-bun run zip          # Chrome
-bun run zip:firefox  # Firefox
+bun run zip            # Chrome zip
+bun run zip:firefox    # Firefox zip
 ```
 
 ---
 
 ## Configuration
 
-### Quick Start
+### Quick start
 
-1. Click the XSanctuary icon in your browser toolbar
-2. Add your OpenRouter API key (required for translations and LLM transforms)
-3. Enable Comic Translation if desired
-4. Add country rules for location-based filtering
+1. Click the XSanctuary icon in your toolbar
+2. Add your OpenRouter API key if you want translations or LLM rewrites
+3. Turn on comic translation if you want it
+4. Add country rules
 
-### Comic Translation Setup
+Video downloads work out of the box and need no API key.
 
-1. **Enable** - Toggle on "Comic Translation" in the popup
-2. **API Key** - Add your OpenRouter API key (get one free at [openrouter.ai](https://openrouter.ai))
-3. **Model** - Select a vision-capable model (default: Gemini 2.5 Flash)
-4. **Language** - Choose your target translation language
-5. **Trigger Mode** - Button (click to translate) or Auto (translate on load)
-6. **Bubble Shape** - Ellipse (simple oval) or Mask (actual detected shape)
-7. **Confidence** - Detection sensitivity (lower = more bubbles detected)
+### Comic translation setup
 
-### Location Rules Setup
+Toggle it on in the popup, add an OpenRouter key ([free tier available](https://openrouter.ai)), and pick a vision-capable model. Gemini 2.5 Flash is the default. Then set your target language, whether translation triggers on a button click or automatically on load, whether overlays use a plain ellipse or the detected mask shape, and the detection confidence. Lower confidence finds more bubbles.
 
-1. Use the country search to find a location
-2. Click **+** to add a rule
-3. Select content action (Hide, Blur, UwU, Cat, LLM)
-4. Optionally select user action (Mute, Block)
-5. Toggle VPN/Deception filters as needed
-6. Set custom LLM prompt if using AI transformation
+### Video download setup
+
+Open the Video Downloads section in the popup. You can turn the hover button off, disable the right-click menu if it clashes with how you use X, and set which audio format is listed first.
+
+### Location rules setup
+
+Search for a country, click **+** to add a rule, then pick a content action and optionally a user action. Toggle the VPN and deception filters if you want the rule narrowed, and set a custom prompt if you chose the LLM action.
 
 ---
 
-## Tech Stack
+## Tech stack
 
-- **[WXT](https://wxt.dev)** - Web Extension Tools framework
-- **[Svelte 5](https://svelte.dev)** - UI framework with runes
-- **[Tailwind CSS](https://tailwindcss.com)** - Utility-first styling
-- **[shadcn-svelte](https://shadcn-svelte.com)** - UI components
-- **[ONNX Runtime](https://onnxruntime.ai)** - On-device ML inference (WebAssembly)
-- **[YOLOv8](https://ultralytics.com)** - Speech bubble detection model
-- **[OpenRouter](https://openrouter.ai)** - LLM API gateway
-
----
-
-## Privacy & Security
-
-XSanctuary respects your privacy:
-
-- **No data collection** - Nothing is sent to our servers
-- **Local ML inference** - YOLO detection runs entirely in your browser
-- **Local storage only** - All settings and caches stay in your browser
-- **Minimal API calls** - Only X.com (location) and OpenRouter (LLM/vision, if configured)
-- **API keys secured** - Stored in Chrome's sandboxed local storage
-
-### What Data Goes Where
-
-| Data | Destination |
-|------|-------------|
-| User location lookups | X.com (Twitter's own API) |
-| Bubble images for translation | OpenRouter (your configured model) |
-| LLM text transformations | OpenRouter (your configured model) |
-| Detection model inference | Local (your browser) |
-| Settings & caches | Local (browser storage) |
+- [WXT](https://wxt.dev) for the extension build
+- [Svelte 5](https://svelte.dev) with runes
+- [Tailwind CSS](https://tailwindcss.com) and [shadcn-svelte](https://shadcn-svelte.com)
+- [mediabunny](https://mediabunny.dev) for reading and converting media in the browser
+- [ONNX Runtime](https://onnxruntime.ai) on WebAssembly for local inference
+- [YOLOv8](https://ultralytics.com) for speech bubble detection
+- [OpenRouter](https://openrouter.ai) as the LLM gateway
 
 ---
 
-## How It Works
+## Privacy
 
-### Location Intelligence
+Nothing is collected and nothing goes to a server run by this project.
 
-XSanctuary uses X's internal `AboutAccountQuery` GraphQL endpoint to fetch user location data. This is the same data X uses internally - we're just making it visible to you.
+| Data | Where it goes |
+|------|---------------|
+| User location lookups | X.com, using Twitter's own API |
+| Video and audio downloads | Straight from X's CDN to your disk. Conversion is local. |
+| Bubble images for translation | OpenRouter, to the model you configured |
+| LLM text rewrites | OpenRouter, to the model you configured |
+| Bubble detection | Local, in your browser |
+| Settings and caches | Local browser storage |
 
-The extension:
-1. Monitors your timeline for new tweets
-2. Extracts usernames and fetches their location data
-3. Caches results locally (7 days for user data, 24h for LLM responses)
-4. Displays badges and applies your configured rules
+Your API key is kept in the browser's sandboxed local storage.
 
-### Comic Translation
+---
 
-The comic translation pipeline:
-1. **Detection** - When you click the translate button (or automatically), the image is sent to an offscreen document
-2. **YOLO Inference** - The YOLOv8 segmentation model runs on the image, detecting speech bubbles with bounding boxes and segmentation masks
-3. **Mask Processing** - Segmentation masks are converted to CSS `polygon()` paths for accurate bubble shapes
-4. **Bubble Cropping** - Each detected bubble is cropped from the original image with padding
-5. **Vision LLM** - Cropped bubbles are sent to a vision-capable LLM (via OpenRouter) for OCR and translation
-6. **Overlay Rendering** - Translated text is displayed in styled overlays that match the original bubble shape and colors
+## How it works
+
+### Location intelligence
+
+The extension calls X's internal `AboutAccountQuery` GraphQL endpoint for account location data. It's the same data X uses itself. The extension watches your timeline for new tweets, looks up the accounts it hasn't seen, caches the results for seven days (24 hours for LLM responses), and applies your rules.
+
+### Comic translation
+
+Images go to an offscreen document, where the YOLOv8 segmentation model finds bubbles and returns boxes plus masks. Masks become CSS `polygon()` paths so the overlay matches the bubble outline. Each bubble is cropped with padding and sent to a vision model through OpenRouter for OCR and translation, then rendered back over the original with matching colors.
+
+### Video downloads
+
+Covered in detail [above](#how-it-finds-the-formats). In short: a main-world script reads X's API responses as the page fetches them and collects the variant list, the content script builds the format menu, and the offscreen document handles conversion through mediabunny before handing the file to Chrome's download manager.
+
+---
+
+## Changelog
+
+### 1.1.0
+
+Added video and audio downloads. Every video and GIF gets a hover button and a right-click menu listing X's real formats: each MP4 resolution with its bitrate and estimated size, plus audio-only export to M4A, MP3, Opus, or WAV.
+
+This was worth building now because of two things that landed in [mediabunny](https://mediabunny.dev) recently. Version 1.42.0 (April 2026) added read and write support for HLS, which is what makes the adaptive-stream videos downloadable at all. Before that you'd have had to parse playlists and stitch segments by hand. Separately, the [@mediabunny/mp3-encoder](https://www.npmjs.com/package/@mediabunny/mp3-encoder) package ships a WASM build of LAME, which fills the gap left by browsers shipping no MP3 encoder in WebCodecs. MP3 export would otherwise have had to be greyed out.
+
+The extension now requests the `downloads` permission. Video downloads are Chrome only.
 
 ---
 
 ## Development
 
 ```bash
-# Install dependencies
 bun install
-
-# Start dev server with hot reload
-bun run dev
-
-# Build for production
-bun run build
-
-# Type check
-bun run check
+bun run dev     # dev server with hot reload
+bun run build   # production build
+bun run check   # type check
 ```
 
 ---
 
 ## License
 
-MIT - See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).
 
 ## Contributing
 
-Contributions welcome! Please open an issue first to discuss what you'd like to change.
+Contributions welcome. Please open an issue first so we can talk about the change before you write it.
 
 ---
 
 <div align="center">
 
-**Made for a more transparent and accessible social media experience**
-
-[Report Bug](https://github.com/Bewinxed/xsanctuary/issues) · [Request Feature](https://github.com/Bewinxed/xsanctuary/issues)
+[Report a bug](https://github.com/Bewinxed/xsanctuary/issues) · [Request a feature](https://github.com/Bewinxed/xsanctuary/issues)
 
 </div>

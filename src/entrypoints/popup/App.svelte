@@ -12,11 +12,11 @@
   import { Slider } from '$lib/components/ui/slider';
   import * as Card from '$lib/components/ui/card';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import { getSettings, saveSettings, type Settings, type CountryRule, type SoftAction, type HardAction, type Theme, type ComicTranslationSettings } from '@/utils/storage';
+  import { getSettings, saveSettings, type Settings, type CountryRule, type SoftAction, type HardAction, type Theme, type ComicTranslationSettings, type VideoDownloadSettings, type DefaultAudioFormat } from '@/utils/storage';
   import { allLocations, regions, type Country } from '@/utils/country-list';
   import { getCacheStats, clearCache } from '@/utils/cache';
   import { SUPPORTED_LANGUAGES, type OpenRouterModel } from '@/utils/vision-llm';
-  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, Settings as SettingsIcon, ChevronDown, ExternalLink, Sun, Moon, Monitor, Languages, Image as ImageIcon } from 'lucide-svelte';
+  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, Settings as SettingsIcon, ChevronDown, ExternalLink, Sun, Moon, Monitor, Languages, Image as ImageIcon, Download } from 'lucide-svelte';
 
   let settings = $state<Settings>({
     rules: [],
@@ -33,6 +33,11 @@
       bubbleModel: 'google/gemini-2.5-flash',
       confidenceThreshold: 0.3,
       bubbleShape: 'mask',
+    },
+    videoDownload: {
+      enabled: true,
+      rightClickMenu: true,
+      defaultAudioFormat: 'm4a',
     },
   });
 
@@ -51,6 +56,7 @@
 
   // Comic translation settings state
   let comicSettingsOpen = $state(false);
+  let videoSettingsOpen = $state(false);
   let visionModels = $state<OpenRouterModel[]>([]);
   let loadingVisionModels = $state(false);
   let visionModelSearchQuery = $state('');
@@ -256,6 +262,24 @@
     };
     save();
   }
+
+  function updateVideoDownload<K extends keyof VideoDownloadSettings>(
+    key: K,
+    value: VideoDownloadSettings[K]
+  ) {
+    settings.videoDownload = {
+      ...settings.videoDownload,
+      [key]: value,
+    };
+    save();
+  }
+
+  const AUDIO_FORMAT_OPTIONS: { value: DefaultAudioFormat; label: string; hint: string }[] = [
+    { value: 'm4a', label: 'M4A', hint: 'Original quality, no re-encode' },
+    { value: 'mp3', label: 'MP3', hint: 'Widest compatibility' },
+    { value: 'opus', label: 'Opus', hint: 'Smallest files' },
+    { value: 'wav', label: 'WAV', hint: 'Lossless, large' },
+  ];
 
   // Auto-fetch vision models when dropdown opens
   $effect(() => {
@@ -596,6 +620,59 @@
           class="h-8 text-xs"
         />
       </div>
+    </Collapsible.Content>
+  </Collapsible.Root>
+
+  <!-- Video Download Section -->
+  <Collapsible.Root bind:open={videoSettingsOpen} class="border-t">
+    <Collapsible.Trigger class="flex w-full items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+      <div class="flex items-center gap-2 text-sm">
+        <Download class="h-4 w-4" />
+        <span>Video Downloads</span>
+        {#if settings.videoDownload.enabled}
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">On</span>
+        {/if}
+      </div>
+      <ChevronDown class="h-4 w-4 transition-transform {videoSettingsOpen ? 'rotate-180' : ''}" />
+    </Collapsible.Trigger>
+    <Collapsible.Content class="px-3 pb-3 space-y-3">
+      <div class="flex items-center justify-between">
+        <Label class="text-xs text-muted-foreground">Show download button on videos</Label>
+        <Switch
+          checked={settings.videoDownload.enabled}
+          onCheckedChange={(checked) => updateVideoDownload('enabled', checked)}
+        />
+      </div>
+
+      {#if settings.videoDownload.enabled}
+        <div class="flex items-center justify-between">
+          <Label class="text-xs text-muted-foreground">Right-click a video to open the menu</Label>
+          <Switch
+            checked={settings.videoDownload.rightClickMenu}
+            onCheckedChange={(checked) => updateVideoDownload('rightClickMenu', checked)}
+          />
+        </div>
+
+        <div class="space-y-1.5">
+          <Label class="text-xs text-muted-foreground">Preferred audio format</Label>
+          <div class="grid grid-cols-4 gap-1.5">
+            {#each AUDIO_FORMAT_OPTIONS as option}
+              <button
+                type="button"
+                title={option.hint}
+                onclick={() => updateVideoDownload('defaultAudioFormat', option.value)}
+                class="flex flex-col items-center gap-0.5 p-2 rounded-md border text-xs transition-colors {settings.videoDownload.defaultAudioFormat === option.value ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50'}"
+              >
+                <span class="font-medium">{option.label}</span>
+              </button>
+            {/each}
+          </div>
+          <p class="text-[10px] text-muted-foreground leading-relaxed">
+            {AUDIO_FORMAT_OPTIONS.find(o => o.value === settings.videoDownload.defaultAudioFormat)?.hint}
+            — audio is extracted locally with mediabunny; nothing is uploaded.
+          </p>
+        </div>
+      {/if}
     </Collapsible.Content>
   </Collapsible.Root>
 
