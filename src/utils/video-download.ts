@@ -215,6 +215,9 @@ function attachDownloadButton(container: HTMLElement, video: HTMLVideoElement): 
   // Hover anywhere on the player reveals the button
   container.classList.add('xsanctuary-video-host');
 
+  btn.setAttribute('aria-haspopup', 'menu');
+  btn.setAttribute('aria-expanded', 'false');
+
   const open = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -246,12 +249,20 @@ function spinnerIcon(): string {
   return '<span class="xsanctuary-spinner"></span>';
 }
 
+// The button that opened the current menu, so focus can return to it
+let menuTrigger: HTMLElement | null = null;
+
 export function closeVideoMenu(): void {
-  if (activeMenu) {
-    activeMenu.remove();
-    activeMenu = null;
-    document.removeEventListener('click', onDocumentClick, true);
-    document.removeEventListener('keydown', onKeyDown, true);
+  if (!activeMenu) return;
+
+  activeMenu.remove();
+  activeMenu = null;
+  document.removeEventListener('click', onDocumentClick, true);
+  document.removeEventListener('keydown', onKeyDown, true);
+
+  if (menuTrigger) {
+    menuTrigger.setAttribute('aria-expanded', 'false');
+    menuTrigger = null;
   }
 }
 
@@ -259,8 +270,36 @@ function onDocumentClick(e: MouseEvent): void {
   if (activeMenu && !activeMenu.contains(e.target as Node)) closeVideoMenu();
 }
 
+function menuItems(): HTMLElement[] {
+  if (!activeMenu) return [];
+  return Array.from(
+    activeMenu.querySelectorAll<HTMLElement>('.xsanctuary-menu-item:not([data-disabled])')
+  );
+}
+
 function onKeyDown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') closeVideoMenu();
+  if (!activeMenu) return;
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    const trigger = menuTrigger;
+    closeVideoMenu();
+    trigger?.focus();
+    return;
+  }
+
+  // Arrow keys walk the list; without this the menu is Tab-only and the
+  // browser's tab order wanders off into the timeline behind it.
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+
+  const items = menuItems();
+  if (items.length === 0) return;
+
+  e.preventDefault();
+  const current = items.indexOf(document.activeElement as HTMLElement);
+  const step = e.key === 'ArrowDown' ? 1 : -1;
+  const next = current === -1 ? 0 : (current + step + items.length) % items.length;
+  items[next].focus();
 }
 
 async function openFormatMenu(
@@ -272,9 +311,13 @@ async function openFormatMenu(
 
   const menu = document.createElement('div');
   menu.className = 'xsanctuary-context-menu xsanctuary-video-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Download formats');
   menu.innerHTML = `<div class="xsanctuary-menu-header">${spinnerIcon()} Reading formats…</div>`;
   document.body.appendChild(menu);
   activeMenu = menu;
+  menuTrigger = anchor;
+  anchor.setAttribute('aria-expanded', 'true');
   positionMenu(menu, anchor, at);
 
   setTimeout(() => {
@@ -304,6 +347,12 @@ async function openFormatMenu(
 
   renderMenu(menu, record, caps);
   positionMenu(menu, anchor, at);
+
+  // Only pull focus for keyboard users; grabbing it on a mouse click would
+  // yank the focus ring onto the first row for no reason.
+  if (menuTrigger?.matches(':focus-visible')) {
+    menuItems()[0]?.focus();
+  }
 }
 
 function renderMenu(
@@ -413,12 +462,12 @@ function menuItem(opts: {
   disabled?: boolean;
 }): string {
   return `
-    <button class="xsanctuary-menu-item xsanctuary-menu-item-rich" type="button"
+    <button class="xsanctuary-menu-item xsanctuary-menu-item-rich" type="button" role="menuitem"
       data-action="${opts.action}"
       data-url="${escapeAttr(opts.url)}"
       data-quality="${escapeAttr(opts.quality)}"
       ${opts.disabled ? 'data-disabled="true" disabled' : ''}>
-      <span class="xsanctuary-menu-icon">${opts.icon}</span>
+      <span class="xsanctuary-menu-icon" aria-hidden="true">${opts.icon}</span>
       <span class="xsanctuary-menu-text">
         <span class="xsanctuary-menu-title">${escapeHtml(opts.title)}</span>
         <span class="xsanctuary-menu-detail">${escapeHtml(opts.detail)}</span>
@@ -481,6 +530,8 @@ async function runAction(item: HTMLElement, record: XMediaRecord): Promise<void>
   activeJobs.set(jobId, {
     onProgress: (ratio) => {
       if (detail) detail.textContent = `Converting… ${Math.round(ratio * 100)}%`;
+      // Drives the progress bar via scaleX on the row's ::after
+      item.style.setProperty('--xs-progress', String(Math.min(1, Math.max(0, ratio))));
     },
   });
 
@@ -524,23 +575,31 @@ function positionMenu(menu: HTMLElement, anchor: HTMLElement, at?: { x: number; 
   const margin = 8;
   const rect = menu.getBoundingClientRect();
 
-  let left: number;
-  let top: number;
+  const origin = at ?? {
+    x: anchor.getBoundingClientRect().right,
+    y: anchor.getBoundingClientRect().bottom + 6,
+  };
 
-  if (at) {
-    left = at.x;
-    top = at.y;
-  } else {
-    const anchorRect = anchor.getBoundingClientRect();
-    left = anchorRect.right - rect.width;
-    top = anchorRect.bottom + 6;
-  }
+  // Prefer hanging below-left of the anchor, but flip on either axis rather
+  // than letting the menu run off screen.
+  const flipUp = origin.y + rect.height + margin > window.innerHeight;
+  const flipRight = origin.x - rect.width < margin;
+
+  let left = flipRight ? origin.x : origin.x - rect.width;
+  let top = flipUp ? origin.y - rect.height - (at ? 0 : 6) : origin.y;
 
   left = Math.min(Math.max(margin, left), window.innerWidth - rect.width - margin);
   top = Math.min(Math.max(margin, top), window.innerHeight - rect.height - margin);
 
   menu.style.left = `${left}px`;
   menu.style.top = `${top}px`;
+
+  // Scale in from the corner nearest the trigger, so the menu reads as
+  // emerging from the button rather than from an arbitrary point.
+  menu.style.setProperty(
+    '--xs-menu-origin',
+    `${flipUp ? 'bottom' : 'top'} ${flipRight ? 'left' : 'right'}`
+  );
 }
 
 function toast(message: string): void {

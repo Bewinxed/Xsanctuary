@@ -89,7 +89,7 @@ WHAT YOU NEED
 
 Video downloads work immediately with no setup and no API key.
 
-Comic translation and LLM text rewriting need an OpenRouter API key, which you add in the popup. OpenRouter has a free tier.
+Comic translation and LLM text rewriting need an OpenRouter account. Click "Connect OpenRouter" in the popup and sign in, and the key is set up for you. If you would rather paste a key yourself, that option is still there. OpenRouter has a free tier.
 
 
 OPEN SOURCE
@@ -111,6 +111,9 @@ Saves videos and extracted audio to your computer when you pick a format from th
 
 **offscreen**
 Runs bubble detection and media conversion in a document with DOM access, which a service worker cannot do.
+
+**identity**
+Used only for the "Connect OpenRouter" button, which signs the user in to their own OpenRouter account via OAuth so they don't have to copy an API key by hand. No identity data is read or stored beyond the key OpenRouter issues.
 
 **Host permission: x.com, twitter.com**
 The extension only works on X. It reads the timeline to add location badges and download buttons, and calls X's own account location endpoint.

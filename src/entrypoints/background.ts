@@ -1,4 +1,6 @@
 import { getLlmCacheKey, getCachedLlmResponse, setCachedLlmResponse, clearLlmCache } from '@/utils/cache';
+import { connectOpenRouter } from '@/utils/openrouter-auth';
+import { setApiKey } from '@/utils/storage';
 import {
   fetchAvailableModels,
   translateBubbleText,
@@ -175,6 +177,13 @@ export default defineBackground(() => {
       return;
     }
 
+    if (message.type === 'OPENROUTER_CONNECT') {
+      handleOpenRouterConnect()
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
     if (message.type === 'AUDIO_CAPABILITIES') {
       sendToOffscreen({ type: 'AUDIO_CAPABILITIES' })
         .then(sendResponse)
@@ -197,6 +206,20 @@ export default defineBackground(() => {
     }
   });
 });
+
+/**
+ * Runs the OAuth flow and stores the resulting key, so the popup only has to
+ * deal with a success/cancel/error result rather than PKCE bookkeeping.
+ */
+async function handleOpenRouterConnect(): Promise<{ success?: boolean; canceled?: boolean; error?: string }> {
+  const result = await connectOpenRouter();
+
+  if (result.canceled) return { canceled: true };
+  if (result.error || !result.key) return { error: result.error || 'No key returned' };
+
+  await setApiKey(result.key);
+  return { success: true };
+}
 
 // ============================================================================
 // Media downloads

@@ -194,15 +194,19 @@ bun run zip:firefox    # Firefox zip
 ### Quick start
 
 1. Click the XSanctuary icon in your toolbar
-2. Add your OpenRouter API key if you want translations or LLM rewrites
+2. Click **Connect OpenRouter** if you want translations or LLM rewrites
 3. Turn on comic translation if you want it
 4. Add country rules
 
-Video downloads work out of the box and need no API key.
+Video downloads work out of the box and need no account.
+
+### Connecting OpenRouter
+
+Comic translation and LLM rewriting call models through OpenRouter, which needs a key. **Connect OpenRouter** in the popup runs an OAuth sign-in and sets the key up for you, so there's nothing to copy and paste. If you'd rather manage the key yourself, "Or paste a key manually" is under the button. Either way the key stays in local browser storage and is only ever sent to OpenRouter.
 
 ### Comic translation setup
 
-Toggle it on in the popup, add an OpenRouter key ([free tier available](https://openrouter.ai)), and pick a vision-capable model. Gemini 2.5 Flash is the default. Then set your target language, whether translation triggers on a button click or automatically on load, whether overlays use a plain ellipse or the detected mask shape, and the detection confidence. Lower confidence finds more bubbles.
+Toggle it on in the popup, connect OpenRouter ([free tier available](https://openrouter.ai)), and pick a vision-capable model. Gemini 2.5 Flash is the default. Then set your target language, whether translation triggers on a button click or automatically on load, whether overlays use a plain ellipse or the detected mask shape, and the detection confidence. Lower confidence finds more bubbles.
 
 ### Video download setup
 
@@ -267,7 +271,9 @@ Added video and audio downloads. Every video and GIF gets a hover button and a r
 
 This was worth building now because of two things that landed in [mediabunny](https://mediabunny.dev) recently. Version 1.42.0 (April 2026) added read and write support for HLS, which is what makes the adaptive-stream videos downloadable at all. Before that you'd have had to parse playlists and stitch segments by hand. Separately, the [@mediabunny/mp3-encoder](https://www.npmjs.com/package/@mediabunny/mp3-encoder) package ships a WASM build of LAME, which fills the gap left by browsers shipping no MP3 encoder in WebCodecs. MP3 export would otherwise have had to be greyed out.
 
-The extension now requests the `downloads` permission. Video downloads are Chrome only.
+OpenRouter can now be connected with a single button instead of pasting an API key. The popup runs an OAuth PKCE sign-in and stores the key it gets back. Manual key entry still works for anyone who prefers it.
+
+The extension now requests the `downloads` permission for saving files and `identity` for the OpenRouter sign-in. Video downloads are Chrome only.
 
 ---
 

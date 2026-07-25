@@ -47,6 +47,44 @@
   let searchQuery = $state('');
   let settingsOpen = $state(false);
   let showApiKey = $state(false);
+  let manualKeyOpen = $state(false);
+  let connecting = $state(false);
+  let authError = $state('');
+
+  // Show enough of the key to recognise it, never enough to leak it
+  const maskedKey = $derived(
+    settings.openRouterApiKey
+      ? `${settings.openRouterApiKey.slice(0, 8)}...${settings.openRouterApiKey.slice(-4)}`
+      : ''
+  );
+
+  async function connectOpenRouter() {
+    connecting = true;
+    authError = '';
+
+    try {
+      const result = await browser.runtime.sendMessage({ type: 'OPENROUTER_CONNECT' });
+
+      if (result?.success) {
+        // The background worker wrote the key, so re-read rather than guessing
+        settings = await getSettings();
+      } else if (result?.error) {
+        authError = result.error;
+      }
+      // A cancel is a deliberate user action, so it needs no error message
+    } catch (e) {
+      authError = e instanceof Error ? e.message : 'Could not reach OpenRouter';
+    } finally {
+      connecting = false;
+    }
+  }
+
+  function disconnectOpenRouter() {
+    settings.openRouterApiKey = '';
+    authError = '';
+    manualKeyOpen = false;
+    save();
+  }
   let models = $state<{ id: string; name: string }[]>([
     { id: 'x-ai/grok-3-fast:free', name: 'Grok 3 Fast (Free)' },
   ]);
@@ -537,27 +575,69 @@
       <ChevronDown class="h-4 w-4 transition-transform {settingsOpen ? 'rotate-180' : ''}" />
     </Collapsible.Trigger>
     <Collapsible.Content class="px-3 pb-3 space-y-3">
-      <!-- API Key -->
+      <!-- OpenRouter connection -->
       <div class="space-y-1.5">
-        <Label class="text-xs text-muted-foreground">OpenRouter API Key</Label>
-        <div class="relative">
-          <Input
-            type={showApiKey ? 'text' : 'password'}
-            placeholder="sk-or-..."
-            value={settings.openRouterApiKey}
-            oninput={updateApiKey}
-            class="h-8 text-xs pr-16"
-          />
-          <button
-            type="button"
-            class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
-            onclick={() => showApiKey = !showApiKey}
+        <Label class="text-xs text-muted-foreground">OpenRouter</Label>
+
+        {#if settings.openRouterApiKey}
+          <div class="flex items-center justify-between gap-2 rounded-md border border-border px-2.5 py-1.5">
+            <span class="flex items-center gap-1.5 text-xs min-w-0">
+              <Check class="h-3 w-3 shrink-0 text-primary" />
+              <span class="truncate font-mono text-muted-foreground">{maskedKey}</span>
+            </span>
+            <button
+              type="button"
+              class="shrink-0 text-[11px] text-muted-foreground transition-colors hover:text-destructive"
+              onclick={disconnectOpenRouter}
+            >
+              Disconnect
+            </button>
+          </div>
+        {:else}
+          <Button
+            variant="outline"
+            size="sm"
+            class="h-8 w-full text-xs"
+            disabled={connecting}
+            onclick={connectOpenRouter}
           >
-            {showApiKey ? 'Hide' : 'Show'}
-          </button>
-        </div>
+            {connecting ? 'Waiting for OpenRouter...' : 'Connect OpenRouter'}
+          </Button>
+        {/if}
+
+        {#if authError}
+          <p class="text-[10px] text-destructive">{authError}</p>
+        {/if}
+
+        <button
+          type="button"
+          class="text-[10px] text-muted-foreground underline-offset-2 hover:underline"
+          onclick={() => manualKeyOpen = !manualKeyOpen}
+        >
+          {manualKeyOpen ? 'Hide manual key entry' : 'Or paste a key manually'}
+        </button>
+
+        {#if manualKeyOpen}
+          <div class="relative">
+            <Input
+              type={showApiKey ? 'text' : 'password'}
+              placeholder="sk-or-..."
+              value={settings.openRouterApiKey}
+              oninput={updateApiKey}
+              class="h-8 text-xs pr-16"
+            />
+            <button
+              type="button"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
+              onclick={() => showApiKey = !showApiKey}
+            >
+              {showApiKey ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        {/if}
+
         <p class="text-[10px] text-muted-foreground">
-          Required for LLM content transformation. Get one at <a href="https://openrouter.ai" target="_blank" class="text-primary hover:underline">openrouter.ai</a>
+          Needed for comic translation and LLM text rewriting. Video downloads work without it.
         </p>
       </div>
 

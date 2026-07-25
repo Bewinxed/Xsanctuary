@@ -794,6 +794,12 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
    Video / audio downloading
    ========================================================================== */
 
+/* Stronger than the built-in curves, which are too soft to feel intentional */
+.xsanctuary-video-dl-btn,
+.xsanctuary-video-menu {
+  --xs-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
 /* Download button on video players (top-right, revealed on hover) */
 .xsanctuary-video-dl-btn {
   position: absolute;
@@ -811,7 +817,10 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
   cursor: pointer;
-  transition: opacity 0.2s ease, background 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 150ms var(--xs-ease-out),
+    background-color 150ms ease,
+    transform 150ms var(--xs-ease-out);
   backdrop-filter: blur(4px);
   opacity: 0;
 }
@@ -821,19 +830,41 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
   right: 48px;
 }
 
-.xsanctuary-video-host:hover .xsanctuary-video-dl-btn,
+/* Hover-to-reveal only makes sense with a real pointer. On touch there is no
+   hover to give, so the button stays visible instead of being unreachable. */
+@media (hover: hover) and (pointer: fine) {
+  .xsanctuary-video-host:hover .xsanctuary-video-dl-btn {
+    opacity: 1;
+  }
+
+  .xsanctuary-video-dl-btn:hover {
+    background: rgba(29, 155, 240, 0.9);
+    transform: scale(1.08);
+  }
+}
+
+@media not all and (hover: hover) {
+  .xsanctuary-video-dl-btn {
+    opacity: 0.85;
+  }
+}
+
+/* Keyboard users need it visible too */
 .xsanctuary-video-dl-btn:focus-visible {
   opacity: 1;
-}
-
-.xsanctuary-video-dl-btn:hover {
-  background: rgba(29, 155, 240, 0.9);
-  transform: scale(1.08);
-}
-
-.xsanctuary-video-dl-btn:focus-visible {
   outline: 2px solid #1d9bf0;
   outline-offset: 2px;
+}
+
+/* Press feedback: the button has to acknowledge the click instantly */
+.xsanctuary-video-dl-btn:active {
+  transform: scale(0.94);
+  transition-duration: 100ms;
+}
+
+.xsanctuary-video-dl-btn[aria-expanded="true"] {
+  opacity: 1;
+  background: rgba(29, 155, 240, 0.9);
 }
 
 /* Format menu (extends .xsanctuary-context-menu) */
@@ -842,6 +873,22 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
   max-width: 360px;
   max-height: 70vh;
   overflow-y: auto;
+  /* Scale in from the trigger rather than the top-left corner the base menu
+     assumes. positionMenu() sets this to whichever corner it anchored to. */
+  transform-origin: var(--xs-menu-origin, top right);
+  animation: xsanctuary-video-menu-in 180ms var(--xs-ease-out);
+}
+
+@keyframes xsanctuary-video-menu-in {
+  from {
+    opacity: 0;
+    /* Never from scale(0): things that shrink to nothing read as unnatural */
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .xsanctuary-menu-section {
@@ -870,42 +917,60 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
 
 /* Two-line menu rows: title on top, format details underneath */
 .xsanctuary-menu-item-rich {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 10px;
   width: 100%;
   padding: 9px 14px;
   text-align: left;
+  transition:
+    background-color 150ms ease,
+    transform 120ms var(--xs-ease-out);
 }
 
-.xsanctuary-menu-icon {
+.xsanctuary-menu-item-rich:active:not([data-disabled]) {
+  transform: scale(0.985);
+}
+
+.xsanctuary-menu-item-rich:focus-visible {
+  outline: 2px solid #1d9bf0;
+  outline-offset: -2px;
+}
+
+/* These beat `.xsanctuary-menu-item span`, which is more specific than a bare
+   class and would otherwise flatten both lines to 16px. */
+.xsanctuary-menu-item-rich .xsanctuary-menu-icon {
   flex: 0 0 auto;
   margin-top: 1px;
   font-size: 14px;
   line-height: 1.3;
 }
 
-.xsanctuary-menu-text {
+.xsanctuary-menu-item-rich .xsanctuary-menu-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  font-size: inherit;
 }
 
-.xsanctuary-menu-title {
+.xsanctuary-menu-item-rich .xsanctuary-menu-title {
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
 }
 
-.xsanctuary-menu-detail {
+.xsanctuary-menu-item-rich .xsanctuary-menu-detail {
   font-size: 11px;
   line-height: 1.35;
   color: rgba(255, 255, 255, 0.5);
   overflow-wrap: anywhere;
+  /* Detail text swaps between quality info and progress, so soften the swap */
+  transition: color 150ms ease;
 }
 
-[data-xsanctuary-theme="light"] .xsanctuary-menu-detail {
+[data-xsanctuary-theme="light"] .xsanctuary-menu-item-rich .xsanctuary-menu-detail {
   color: rgba(0, 0, 0, 0.5);
 }
 
@@ -918,6 +983,11 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
   background: transparent;
 }
 
+/* A converting row stays legible rather than dimming out like a disabled one */
+.xsanctuary-menu-item-rich.working {
+  opacity: 1;
+}
+
 .xsanctuary-menu-item-rich.working .xsanctuary-menu-detail {
   color: #1d9bf0;
 }
@@ -928,4 +998,62 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
 
 .xsanctuary-menu-item-rich.failed .xsanctuary-menu-detail {
   color: #f4212e;
+}
+
+/* Determinate progress along the bottom of the converting row. scaleX on a
+   pseudo-element keeps this on the compositor instead of triggering layout. */
+.xsanctuary-menu-item-rich.working::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: #1d9bf0;
+  transform: scaleX(var(--xs-progress, 0));
+  transform-origin: left center;
+  transition: transform 200ms linear;
+}
+
+.xsanctuary-menu-item-rich.done::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: #00ba7c;
+  transform: scaleX(1);
+  transform-origin: left center;
+}
+
+/* Reduced motion: keep the fades that explain state, drop the movement */
+@media (prefers-reduced-motion: reduce) {
+  .xsanctuary-video-menu {
+    animation: xsanctuary-video-menu-fade 120ms ease;
+  }
+
+  .xsanctuary-video-dl-btn,
+  .xsanctuary-menu-item-rich {
+    transition-property: opacity, background-color, color;
+  }
+
+  .xsanctuary-video-dl-btn:hover,
+  .xsanctuary-video-dl-btn:active,
+  .xsanctuary-menu-item-rich:active:not([data-disabled]) {
+    transform: none;
+  }
+
+  .xsanctuary-menu-item-rich.working::after {
+    transition: none;
+  }
+}
+
+@keyframes xsanctuary-video-menu-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
