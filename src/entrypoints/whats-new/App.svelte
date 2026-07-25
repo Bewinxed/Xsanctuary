@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Download, Music, Images, Flag, Languages, KeyRound, ShieldCheck } from 'lucide-svelte';
+  import { Switch } from '$lib/components/ui/switch';
+  import { getSettings, saveSettings } from '@/utils/storage';
 
   // Staggered entry, kept short so nothing blocks reading
   let mounted = $state(false);
@@ -12,10 +14,53 @@
     try {
       const stored = await browser.storage.local.get('lastSeenVersion');
       previousVersion = (stored.lastSeenVersion as string) || '';
+      await loadToggles();
     } catch {
       // Not important enough to surface
     }
   });
+
+  // The two features that are off until asked for. Surfaced here so the
+  // choice is made deliberately, rather than buried in settings.
+  const optional = [
+    {
+      key: 'locationIntelligence' as const,
+      icon: Flag,
+      title: 'Show where accounts post from',
+      body: 'Puts a country flag next to usernames and lets you hide, blur or mute accounts by country. While this is off, no account lookups are made at all.',
+    },
+    {
+      key: 'comicTranslation' as const,
+      icon: Languages,
+      title: 'Translate comics in the timeline',
+      body: 'Finds speech bubbles on your own machine and translates them in place. Needs an OpenRouter account, which you can connect from the toolbar icon.',
+    },
+  ];
+
+  let toggles = $state<Record<string, boolean>>({
+    locationIntelligence: false,
+    comicTranslation: false,
+  });
+
+  async function loadToggles() {
+    const settings = await getSettings();
+    toggles = {
+      locationIntelligence: settings.locationIntelligence.enabled,
+      comicTranslation: settings.comicTranslation.enabled,
+    };
+  }
+
+  async function setToggle(key: 'locationIntelligence' | 'comicTranslation', value: boolean) {
+    toggles = { ...toggles, [key]: value };
+
+    const settings = await getSettings();
+    if (key === 'locationIntelligence') {
+      settings.locationIntelligence = { ...settings.locationIntelligence, enabled: value };
+    } else {
+      settings.comicTranslation = { ...settings.comicTranslation, enabled: value };
+    }
+    await saveSettings(settings);
+  }
 
   const features = [
     {
@@ -32,16 +77,6 @@
       icon: Images,
       title: 'Bulk image download, unchanged',
       body: 'The profile download button you already use works exactly as before. Same prompt, same auto-scrolling, same zip. It is faster on large batches now.',
-    },
-    {
-      icon: Flag,
-      title: 'See where accounts post from',
-      body: 'Country flags next to usernames, with VPN and mismatched-flag accounts marked. You can hide, blur or mute accounts by country, or leave the whole thing switched off.',
-    },
-    {
-      icon: Languages,
-      title: 'Translate comics in the timeline',
-      body: 'Speech bubbles get detected on your own machine and translated in place. Off by default, and it needs an OpenRouter key.',
     },
     {
       icon: KeyRound,
@@ -137,15 +172,55 @@
       </ul>
     </section>
 
+    <!-- Opt-in features -->
+    <section
+      class="mt-12 transition-all duration-500 ease-out"
+      class:opacity-0={!mounted}
+      class:translate-y-2={!mounted}
+      style="transition-delay: {140 + features.length * 50}ms"
+    >
+      <h2 class="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        Switched off unless you want them
+      </h2>
+      <p class="mt-2 text-[13px] leading-relaxed text-muted-foreground">
+        These two are separate from downloading and stay off until you turn them on. You can
+        change your mind at any time from the toolbar icon.
+      </p>
+
+      <ul class="mt-5 space-y-3">
+        {#each optional as item}
+          {@const Icon = item.icon}
+          <li class="flex items-start gap-4 rounded-xl border border-border bg-card p-4">
+            <span
+              class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary"
+            >
+              <Icon class="h-[18px] w-[18px] text-foreground" />
+            </span>
+            <div class="min-w-0 flex-1">
+              <h3 class="text-[15px] font-semibold">{item.title}</h3>
+              <p class="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+                {item.body}
+              </p>
+            </div>
+            <Switch
+              checked={toggles[item.key]}
+              onCheckedChange={(checked) => setToggle(item.key, checked)}
+              aria-label={item.title}
+            />
+          </li>
+        {/each}
+      </ul>
+    </section>
+
     <!-- Footer -->
     <footer
       class="mt-12 border-t border-border pt-6 transition-all duration-500 ease-out"
       class:opacity-0={!mounted}
-      style="transition-delay: {140 + features.length * 50}ms"
+      style="transition-delay: {190 + features.length * 50}ms"
     >
       <p class="text-[13px] leading-relaxed text-muted-foreground">
-        Everything new is switched on or off from the toolbar icon. If you only ever wanted the
-        image downloader, turn the rest off there and it will stay out of your way.
+        If you only ever wanted the image downloader, you can ignore all of this. Leave the two
+        switches above alone and it behaves the way it always has.
       </p>
 
       <div class="mt-5 flex flex-wrap items-center gap-3">

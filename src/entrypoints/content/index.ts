@@ -403,6 +403,11 @@ export default defineContentScript({
   },
 });
 
+function locationEnabled(): boolean {
+  // Master switch AND the location opt-in. Downloading is unaffected by both.
+  return !!cachedSettings?.enabled && !!cachedSettings?.locationIntelligence?.enabled;
+}
+
 function processPage() {
   // Video downloading has its own toggle and works independently of country rules
   processVideos();
@@ -411,7 +416,7 @@ function processPage() {
   // xitter-scraper build. Independent of the country rules too.
   injectBulkDownloadButton();
 
-  if (!cachedSettings?.enabled) return;
+  if (!locationEnabled()) return;
 
   // Find all username links and tweets
   document.querySelectorAll('a[href^="/"][role="link"]').forEach(processElement);
@@ -421,7 +426,7 @@ function processPage() {
 function processElement(element: Element) {
   processVideos(element);
 
-  if (!cachedSettings?.enabled) return;
+  if (!locationEnabled()) return;
 
   // Find username links (those starting with @)
   const links = element.matches('a[href^="/"][role="link"]')
@@ -462,6 +467,11 @@ async function processTweet(tweet: Element) {
 
   // Process images for comic translation
   processImagesInTweet(tweet);
+
+  // Everything below is location work, which also means the X account lookups.
+  // Bailing here keeps those requests from firing at all when the feature is
+  // switched off, rather than fetching and then discarding the answer.
+  if (!locationEnabled()) return;
 
   // Find the username in this tweet
   const usernameLink = tweet.querySelector('a[href^="/"][role="link"]');

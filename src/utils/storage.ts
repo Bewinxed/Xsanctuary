@@ -31,6 +31,10 @@ export interface ComicTranslationSettings {
   bubbleShape: BubbleShapeMode; // Shape of translation overlay
 }
 
+export interface LocationIntelligenceSettings {
+  enabled: boolean;
+}
+
 export type DefaultAudioFormat = 'm4a' | 'mp3' | 'opus' | 'wav';
 
 export interface VideoDownloadSettings {
@@ -48,6 +52,7 @@ export interface Settings {
   theme: Theme;
   comicTranslation: ComicTranslationSettings;
   videoDownload: VideoDownloadSettings;
+  locationIntelligence: LocationIntelligenceSettings;
 }
 
 const defaultComicTranslationSettings: ComicTranslationSettings = {
@@ -58,6 +63,13 @@ const defaultComicTranslationSettings: ComicTranslationSettings = {
   bubbleModel: 'google/gemini-2.5-flash',
   confidenceThreshold: 0.3, // Default 0.3 for more sensitive detection
   bubbleShape: 'mask', // Default to using actual detected bubble shape
+};
+
+// Off until asked for. Downloading media is what this extension is for; the
+// location features are a separate thing a user opts into, not something they
+// inherit by installing a downloader.
+const defaultLocationIntelligenceSettings: LocationIntelligenceSettings = {
+  enabled: false,
 };
 
 const defaultVideoDownloadSettings: VideoDownloadSettings = {
@@ -75,6 +87,7 @@ const defaultSettings: Settings = {
   theme: 'system',
   comicTranslation: defaultComicTranslationSettings,
   videoDownload: defaultVideoDownloadSettings,
+  locationIntelligence: defaultLocationIntelligenceSettings,
 };
 
 // Storage items
@@ -110,6 +123,13 @@ export async function getSettings(): Promise<Settings> {
     videoDownload: {
       ...defaultVideoDownloadSettings,
       ...(stored?.videoDownload || {}),
+    },
+    locationIntelligence: {
+      ...defaultLocationIntelligenceSettings,
+      // Anyone who already had country rules configured clearly wants the
+      // feature, so it stays on for them rather than silently switching off.
+      ...(stored?.locationIntelligence ||
+        (ensureArray(stored?.rules as CountryRule[]).length > 0 ? { enabled: true } : {})),
     },
   };
 

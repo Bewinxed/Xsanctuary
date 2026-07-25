@@ -16,7 +16,7 @@
   import { allLocations, regions, type Country } from '@/utils/country-list';
   import { getCacheStats, clearCache } from '@/utils/cache';
   import { SUPPORTED_LANGUAGES, type OpenRouterModel } from '@/utils/vision-llm';
-  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, Settings as SettingsIcon, ChevronDown, ExternalLink, Sun, Moon, Monitor, Languages, Image as ImageIcon, Download } from 'lucide-svelte';
+  import { Trash2, Plus, Shield, Database, ChevronsUpDown, Check, Settings as SettingsIcon, ChevronDown, ExternalLink, Sun, Moon, Monitor, Languages, Image as ImageIcon, Download, Flag } from 'lucide-svelte';
 
   let settings = $state<Settings>({
     rules: [],
@@ -38,6 +38,9 @@
       enabled: true,
       rightClickMenu: true,
       defaultAudioFormat: 'm4a',
+    },
+    locationIntelligence: {
+      enabled: false,
     },
   });
 
@@ -705,6 +708,24 @@
       </div>
     </Collapsible.Content>
   </Collapsible.Root>
+
+  <!-- Location Intelligence toggle -->
+  <div class="flex items-center justify-between border-t p-3">
+    <div class="flex items-center gap-2 text-sm">
+      <Flag class="h-4 w-4" />
+      <span>Location badges &amp; rules</span>
+      {#if settings.locationIntelligence.enabled}
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">On</span>
+      {/if}
+    </div>
+    <Switch
+      checked={settings.locationIntelligence.enabled}
+      onCheckedChange={(checked) => {
+        settings.locationIntelligence = { ...settings.locationIntelligence, enabled: checked };
+        save();
+      }}
+    />
+  </div>
 
   <!-- Video Download Section -->
   <Collapsible.Root bind:open={videoSettingsOpen} class="border-t">
