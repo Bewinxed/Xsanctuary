@@ -2,7 +2,7 @@
   "name": "xsanctuary",
   "description": "Show country flags for Twitter/X users based on their location",
   "private": true,
-  "version": "1.1.0",
+  "version": "3.1.0",
   "type": "module",
   "author": {
     "name": "Omar Al Matar",
@@ -31,6 +31,7 @@
     "@tailwindcss/vite": "^4.1.17",
     "@tanstack/table-core": "^8.20.5",
     "@tsconfig/svelte": "^5.0.5",
+    "@types/jszip": "^3.4.1",
     "@wxt-dev/auto-icons": "^1.1.0",
     "@wxt-dev/module-svelte": "^2.0.3",
     "autoprefixer": "^10.4.22",
@@ -60,6 +61,7 @@
   "dependencies": {
     "@mediabunny/mp3-encoder": "^1.51.0",
     "country-flag-icons": "^1.6.4",
+    "jszip": "^3.10.1",
     "mediabunny": "^1.51.0",
     "onnxruntime-web": "^1.23.2"
   }

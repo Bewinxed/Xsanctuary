@@ -7,6 +7,7 @@
       "dependencies": {
         "@mediabunny/mp3-encoder": "^1.51.0",
         "country-flag-icons": "^1.6.4",
+        "jszip": "^3.10.1",
         "mediabunny": "^1.51.0",
         "onnxruntime-web": "^1.23.2",
       },
@@ -16,6 +17,7 @@
         "@tailwindcss/vite": "^4.1.17",
         "@tanstack/table-core": "^8.20.5",
         "@tsconfig/svelte": "^5.0.5",
+        "@types/jszip": "^3.4.1",
         "@wxt-dev/auto-icons": "^1.1.0",
         "@wxt-dev/module-svelte": "^2.0.3",
         "autoprefixer": "^10.4.22",
@@ -370,6 +372,8 @@
     "@types/har-format": ["@types/har-format@1.2.16", "", {}, "sha512-fluxdy7ryD3MV6h8pTfTYpy/xQzCFC7m89nOH9y94cNqJ1mDIDPut7MnRHI3F6qRmh/cT2fUjG1MLdCNb4hE9A=="],
 
     "@types/json-schema": ["@types/json-schema@7.0.15", "", {}, "sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA=="],
+
+    "@types/jszip": ["@types/jszip@3.4.1", "", { "dependencies": { "jszip": "*" } }, "sha512-TezXjmf3lj+zQ651r6hPqvSScqBLvyPI9FxdXBqpEwBijNGQ2NXpaFW/7joGzveYkKQUil7iiDHLo6LV71Pc0A=="],
 
     "@types/minimatch": ["@types/minimatch@3.0.5", "", {}, "sha512-Klz949h02Gz2uZCMGwDUSDS1YBlTdDDgbWHi+81l29tQALUtvz4rAYi5uoVhE5Lagoq6DeqAUlbrHvW/mXDgdQ=="],
 

@@ -13,7 +13,8 @@ export default defineConfig({
   }),
   manifest: {
     name: 'XSanctuary',
-    description: 'Show country flags for Twitter/X users based on their location',
+    description:
+      'Download X videos, audio and bulk images, see where accounts post from, and translate comics in your timeline.',
     permissions: ['storage', 'offscreen', 'downloads', 'identity'],
     host_permissions: ['*://*.x.com/*', '*://*.twitter.com/*', '*://*.twimg.com/*'],
     action: {

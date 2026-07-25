@@ -17,6 +17,7 @@ import {
   initVideoDownloads,
   processVideos,
 } from '@/utils/video-download';
+import { injectBulkDownloadButton } from '@/utils/bulk-image-download';
 import './style.css';
 
 // Helper to render flag (emoji or SVG image)
@@ -337,6 +338,11 @@ export default defineContentScript({
         pendingElements = [];
         processingScheduled = false;
         elements.forEach(processElement);
+
+        // X renders the profile header well after first paint, so the button
+        // has to be retried. Once per batch, not per node: the early-out is
+        // cheap but this fires on every DOM change X makes.
+        injectBulkDownloadButton();
       });
     }
 
@@ -400,6 +406,10 @@ export default defineContentScript({
 function processPage() {
   // Video downloading has its own toggle and works independently of country rules
   processVideos();
+
+  // Profile-header bulk image download, carried over from the published
+  // xitter-scraper build. Independent of the country rules too.
+  injectBulkDownloadButton();
 
   if (!cachedSettings?.enabled) return;
 
