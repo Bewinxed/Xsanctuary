@@ -148,10 +148,23 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            VERSION="${{ inputs.version }}"
           else
-            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            VERSION="${GITHUB_REF#refs/tags/v}"
           fi
+
+          # The store rejects any upload that isn't strictly newer than what's
+          # live. Catching that here costs a second; finding out from an opaque
+          # curl exit code costs a release cycle.
+          PUBLISHED="3.0.1"
+          HIGHEST=$(printf '%s\n%s\n' "$VERSION" "$PUBLISHED" | sort -V | tail -1)
+
+          if [ "$VERSION" = "$PUBLISHED" ] || [ "$HIGHEST" != "$VERSION" ]; then
+            echo "::error::Tag version $VERSION is not newer than the published $PUBLISHED, so the store would reject it. Tag a higher version."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set version in package.json
         if: steps.creds.outputs.present == 'true'
@@ -204,20 +217,33 @@ jobs:
             exit 1
           fi
 
-          # Verified CRX uploads go up as a raw body, not multipart
-          RESPONSE=$(curl -s --fail-with-body -X POST \
+          echo "Uploading version ${{ steps.version.outputs.version }}"
+
+          # Capture the body and status separately. --fail-with-body under
+          # `set -e` aborts before anything can be printed, which hides the one
+          # thing worth seeing when the store says no.
+          HTTP_CODE=$(curl -s -o /tmp/cws-response.json -w '%{http_code}' -X POST \
             -H "Authorization: Bearer $TOKEN" \
             -H "X-Goog-Upload-Protocol: raw" \
             -H "X-Goog-Upload-File-Name: xsanctuary.crx" \
             -T .output/xsanctuary.crx \
-            "https://chromewebstore.googleapis.com/upload/v2/publishers/$PUBLISHER_ID/items/$EXTENSION_ID:upload")
+            "https://chromewebstore.googleapis.com/upload/v2/publishers/$PUBLISHER_ID/items/$EXTENSION_ID:upload" || true)
 
-          echo "$RESPONSE"
+          echo "HTTP $HTTP_CODE"
+          cat /tmp/cws-response.json || true
+          echo
 
-          if echo "$RESPONSE" | jq -e '.uploadState == "FAILURE"' > /dev/null 2>&1; then
-            echo "::error::Upload rejected: $(echo "$RESPONSE" | jq -r '.itemError[]?.error_detail // "unknown"')"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Store rejected the upload with HTTP $HTTP_CODE: $(jq -r '.error.message // .' /tmp/cws-response.json 2>/dev/null || cat /tmp/cws-response.json)"
             exit 1
           fi
+
+          if jq -e '.uploadState == "FAILURE"' /tmp/cws-response.json > /dev/null 2>&1; then
+            echo "::error::Upload failed: $(jq -r '[.itemError[]?.error_detail] | join("; ")' /tmp/cws-response.json)"
+            exit 1
+          fi
+
+          echo "Uploaded. The new version is a draft in the dashboard."
 
       # Left as a separate, manually triggered step on purpose: the upload above
       # lands a draft in the dashboard, so the new version can be looked at
