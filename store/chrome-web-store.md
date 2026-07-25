@@ -1,145 +1,162 @@
 # Chrome Web Store listing copy
 
-Paste-ready text for the XSanctuary listing in the Chrome Web Store developer dashboard.
-Character limits noted per field.
+For item `cfkdbndljmndgmnagcekhfjplieaagbk`, currently listed as xitter-scraper
+and renamed to XSanctuary in version 3.1.0.
+
+Paste these into the dashboard. The API uploads the package only; listing text
+is edited by hand, and a package that does more than its listing describes is
+what draws scrutiny.
 
 ---
 
 ## Name (45 characters max)
 
 ```
-XSanctuary
+XSanctuary: X Media Downloader
 ```
+
+30 characters. Keeping a descriptive tail rather than the bare word makes the
+purpose legible to users and reviewers alike.
 
 ---
 
 ## Short description (132 characters max)
 
 ```
-See where X accounts post from, download videos and audio in any format, and translate comics in your timeline.
+Download images, video and audio from X. Pick the resolution, or save just the audio. Everything runs in your browser.
 ```
 
-110 characters.
+117 characters.
 
 ---
 
 ## Category
 
-Social & Communication
+Productivity
+
+---
+
+## Single purpose description
+
+```
+XSanctuary downloads media from X.com. It saves images in bulk from a profile, saves video and GIFs at a resolution the user chooses, and extracts the audio track from a video as an audio file. Everything it does serves the purpose of getting media off X and onto the user's computer.
+```
 
 ---
 
 ## Detailed description (16,000 characters max)
 
 ```
-XSanctuary adds three things to X (Twitter): location data on accounts, video and audio downloads, and comic translation.
+XSanctuary downloads media from X. It was previously called xitter-scraper, and the bulk image downloader you may already know is unchanged.
+
+Everything happens in your browser. There is no download service in the middle, nothing is uploaded anywhere, and no third party learns what you save.
 
 
-VIDEO AND AUDIO DOWNLOADS
+IMAGES
 
-Hover any video or GIF and a download button appears in the corner. Click it, or right-click the player, and you get a menu of everything X is actually serving for that clip.
+Open a profile, click the download button in the header, and choose how many images you want. It scrolls, collects, and hands you a zip at full quality, up to 4K where X has it.
 
-The menu lists every resolution available with its bitrate and an estimated file size, so you can take the 1080p copy or the small one depending on what you need it for.
-
-Below that are audio options, which pull the soundtrack out without downloading a video file you would only throw away:
-
-M4A copies the original audio track with no re-encoding, so it is lossless and near instant.
-MP3 at 192 kbps, encoded locally.
-Opus at 128 kbps, the smallest file for the same quality.
-WAV, uncompressed.
-
-Some clips, mostly long videos and broadcasts, are only served as adaptive streams with no plain MP4 to grab. Those get a "best available" option that downloads the stream and rebuilds it into an MP4 on your machine.
-
-All of it happens in your browser. There is no download service in the middle, nothing is uploaded, and no third party learns which videos you save.
+If you cancel partway, you still get everything collected so far rather than nothing.
 
 
-LOCATION INTELLIGENCE
+VIDEO
 
-Country flags appear next to usernames, drawn from X's own account location data.
+Hover any video or GIF and a download button appears in the corner. Click it, or right-click the player, for a menu of every version X is actually serving.
 
-A blue border is the location X reports. A dashed orange border means X flagged that location as inaccurate, which usually means a VPN. A red border means the flags in someone's profile contradict where they are actually posting from.
-
-You can set rules per country. Matching tweets can be hidden, blurred behind a click-to-reveal, or rewritten. Accounts can be muted or blocked automatically. Rules can be narrowed to fire only on VPN users, or only on profiles whose flags do not match.
-
-Blurred tweets keep controls in the header, so you can reveal one, pause the rule for an hour, or whitelist that account for good without digging through settings.
+Each option shows its resolution, bitrate and rough file size, so you can take the 1080p copy or a small one depending on what it is for. Videos that X only streams adaptively, usually long ones and broadcasts, are rebuilt into a normal MP4 on your machine.
 
 
-COMIC AND MANGA TRANSLATION
+AUDIO
 
-Speech bubbles in timeline images are detected by a model that runs locally in your browser, then translated by a vision model of your choosing.
+The same menu can save just the soundtrack, so you are not downloading a video file you were going to throw away.
 
-Because detection is on-device, images are not uploaded for that step. Only the cropped bubbles go out, and only if you have configured an API key. Translations appear as overlays shaped to the actual bubble outline, picking up the original text and background colors, and they stream in as the model responds. It works in the timeline and the full-screen viewer.
-
-Translates from Japanese, Korean, Chinese and other languages into English, Spanish, French, German, Italian, Portuguese, Russian, Arabic, Thai, Vietnamese, Indonesian, and more.
+M4A copies the original audio track without re-encoding it, so it is lossless and nearly instant. MP3, Opus and WAV are also available and are encoded locally. Formats your browser cannot produce are greyed out rather than failing halfway through.
 
 
-TEXT REWRITING
+OPTIONAL EXTRAS, OFF BY DEFAULT
 
-Tweets from countries you have set rules for can be rewritten through any model on OpenRouter, with a prompt you control. There are also two offline rewrites built in, UwU speak and cat speak, which need no API key.
+Two further features exist and are switched off unless you turn them on. A fresh install downloads media and does nothing else.
+
+Account locations. Puts a country flag next to usernames, marks accounts whose location looks inaccurate, and can hide, blur or mute accounts by country. While this is off, no account lookups are made at all.
+
+Comic translation. Finds speech bubbles in timeline images and translates them in place. Bubble detection runs on your own machine. Translation needs an OpenRouter account, which you connect yourself.
+
+Both are turned on and off from the toolbar icon, and neither does anything until you do.
+
+
+PERMISSIONS
+
+Saving files, because it downloads things to your computer.
+
+Access to x.com and twimg.com, because that is where the media is. It does not run anywhere else.
+
+Sign-in, used for one thing only: the optional button that connects your own OpenRouter account, so you do not have to copy an API key by hand. It is unused unless you turn on comic translation.
 
 
 PRIVACY
 
-No analytics, no telemetry, no account, and no server operated by this project.
+No analytics, no telemetry, no account, no server operated by this project.
 
-Location lookups go to X's own API, the same endpoint the site uses. Video downloads come straight from X's CDN to your disk, and any format conversion runs locally. Bubble images and text rewrites go to OpenRouter only, and only to the model you picked, and only if you have entered a key. Settings and caches stay in browser storage. Your API key is kept in the browser's sandboxed local storage.
-
-
-WHAT YOU NEED
-
-Video downloads work immediately with no setup and no API key.
-
-Comic translation and LLM text rewriting need an OpenRouter account. Click "Connect OpenRouter" in the popup and sign in, and the key is set up for you. If you would rather paste a key yourself, that option is still there. OpenRouter has a free tier.
+Downloads come straight from X to your disk. Any format conversion runs locally. Settings and your API key, if you set one, stay in your browser.
 
 
 OPEN SOURCE
 
-MIT licensed. The full source is at https://github.com/Bewinxed/xsanctuary
+MIT licensed. The source is at https://github.com/Bewinxed/xsanctuary
 ```
 
 ---
 
 ## Permission justifications
 
-The dashboard asks for a one-line reason per permission. These are the answers.
-
 **storage**
-Saves your settings, country rules, and the local cache of account lookups and translations. Nothing leaves the browser.
+Saves your settings and a local cache. Nothing leaves the browser.
 
 **downloads**
-Saves videos and extracted audio to your computer when you pick a format from the download menu.
+Saves images, video and extracted audio to your computer. This is the core function of the extension.
 
 **offscreen**
-Runs bubble detection and media conversion in a document with DOM access, which a service worker cannot do.
+Audio extraction and video remuxing need a document context with WebCodecs, which a service worker does not have. Also used by the optional on-device bubble detection.
 
 **identity**
-Used only for the "Connect OpenRouter" button, which signs the user in to their own OpenRouter account via OAuth so they don't have to copy an API key by hand. No identity data is read or stored beyond the key OpenRouter issues.
+Used only by the optional "Connect OpenRouter" button, so users of the translation feature can sign in to their own OpenRouter account instead of pasting an API key. No identity data is read or stored beyond the key OpenRouter issues. Unused unless that feature is enabled.
 
 **Host permission: x.com, twitter.com**
-The extension only works on X. It reads the timeline to add location badges and download buttons, and calls X's own account location endpoint.
+The extension only functions on X. It reads the page to find media and to place the download buttons.
 
 **Host permission: twimg.com**
-X serves its images and video files from this domain. Needed to read video metadata and fetch the media you asked to download.
-
----
-
-## Single purpose description
-
-XSanctuary enhances the X (Twitter) website: it shows where accounts are based so users can filter their timeline by location, lets users download the videos and images X serves, and translates foreign-language text in timeline images.
+X serves its images and video from this domain. Required to fetch the media the user asked to download.
 
 ---
 
 ## Data usage disclosures
 
-Check "I do not sell or transfer user data to third parties" and the certification boxes.
+Check "I do not sell or transfer user data to third parties" and both certification boxes.
 
-Declare no collection for every category. The extension has no backend and no analytics. The only outbound requests are to X itself, to X's CDN, and to OpenRouter, and the OpenRouter requests only happen if the user enters their own key and enables a feature that uses it.
+Declare no collection in every category. There is no backend and no analytics. Outbound requests go to X, to X's CDN, and to OpenRouter, and the OpenRouter ones happen only if the user supplies their own key and enables a feature that uses it.
 
 ---
 
-## Notes before submitting
+## Screenshots
 
-- Screenshots must be 1280x800 or 640x400. The files in `screenshots/` need resizing to match.
-- A 440x280 small promo tile is required.
-- Video downloading is allowed on the Chrome Web Store, but downloading from YouTube specifically is not. Keep the listing about X and do not imply YouTube support.
-- The `downloads` permission and the broad host permissions will likely draw a manual review, so expect a slower first approval than an update.
+The existing screenshots show the country-flag interface, which is now an
+off-by-default feature. Leaving those as the primary images argues against the
+stated purpose. Replace them, in this order:
+
+1. The video format menu open over a tweet, showing resolutions and sizes
+2. The audio section of the same menu
+3. The profile bulk image download prompt
+4. The progress card mid-download, or the resulting zip
+5. The popup, with the optional features switched off
+
+Required sizes: 1280x800 or 640x400. A 440x280 promo tile is also required.
+
+---
+
+## Notes for this submission
+
+- The rename from xitter-scraper to XSanctuary happens through the manifest and takes effect on approval. The extension ID and the existing install base are unaffected.
+- The version must exceed the published 3.0.1. This submission is 3.1.0.
+- The added permissions mean Chrome disables the extension for existing users until they re-approve it. On first run after updating, the extension shows a page explaining the rename and the permissions, and lets them choose whether to switch the optional features on.
+- Expect a slower review than a routine update. New permissions plus a name change usually means a person looks at it.
+- Downloading media is allowed on the Chrome Web Store; downloading from YouTube specifically is not. This extension does not touch YouTube and the listing should not imply otherwise.
