@@ -56,7 +56,72 @@ async function sendToOffscreen(message: Record<string, unknown>) {
   return chrome.runtime.sendMessage({ ...message, target: 'offscreen' });
 }
 
+// Versions at or above this renamed the extension and expanded permissions,
+// so anyone coming from below it gets an explanation rather than a silent
+// change and a Chrome permission prompt they can't account for.
+const RENAME_VERSION = '3.1.0';
+
+function isOlderThan(version: string, target: string): boolean {
+  const a = version.split('.').map(Number);
+  const b = target.split('.').map(Number);
+
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const left = a[i] || 0;
+    const right = b[i] || 0;
+    if (left !== right) return left < right;
+  }
+  return false;
+}
+
+async function handleInstalled(details: { reason: string; previousVersion?: string }) {
+  const current = browser.runtime.getManifest().version;
+
+  // A fresh install gets the store listing as its introduction; it needs no
+  // explanation of a rename it never experienced.
+  if (details.reason !== 'update') {
+    await browser.storage.local.set({ lastSeenVersion: current });
+    return;
+  }
+
+  const previous = details.previousVersion || '';
+  if (!previous || !isOlderThan(previous, RENAME_VERSION)) {
+    await browser.storage.local.set({ lastSeenVersion: current });
+    return;
+  }
+
+  await browser.storage.local.set({ lastSeenVersion: previous });
+
+  try {
+    await browser.tabs.create({ url: browser.runtime.getURL('/whats-new.html') });
+  } catch {
+    // If the tab can't open, fall back to the badge below rather than failing
+  }
+
+  // A quiet marker on the toolbar icon in case the tab was missed or closed
+  try {
+    await browser.action.setBadgeText({ text: 'NEW' });
+    await browser.action.setBadgeBackgroundColor({ color: '#1d9bf0' });
+  } catch {
+    // Badge support varies; not worth surfacing
+  }
+}
+
 export default defineBackground(() => {
+  browser.runtime.onInstalled.addListener((details) => {
+    void handleInstalled(details);
+  });
+
+  // onClicked never fires while a default_popup is set, so the popup clears
+  // the badge itself by sending this on open.
+  browser.runtime.onMessage.addListener((message) => {
+    if (message?.type === 'NOTICE_SEEN') {
+      void browser.action.setBadgeText({ text: '' });
+      void browser.storage.local.set({
+        lastSeenVersion: browser.runtime.getManifest().version,
+      });
+    }
+  });
+
   // Handle all message types
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Ignore messages meant for offscreen

@@ -137,6 +137,9 @@
     settings = await getSettings();
     cacheStats = await getCacheStats();
     applyTheme(settings.theme);
+
+    // Opening the popup counts as having read the update notice
+    browser.runtime.sendMessage({ type: 'NOTICE_SEEN' }).catch(() => {});
   });
 
   function applyTheme(theme: Theme) {
