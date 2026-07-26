@@ -21,6 +21,22 @@ const BUTTON_ID = 'xsanctuary-bulk-image-download';
 const X_BUTTON_CLASSES =
   'css-175oi2r r-sdzlij r-1phboty r-rs99b7 r-lrvibr r-6gpygo r-1wron08 r-2yi16 r-1qi8awa r-1loqt21 r-o7ynqc r-6416eg r-1ny4l3l';
 
+interface PostMetadata {
+  screenName: string;
+  tweetId: string;
+  timestamp: string;
+  caption: string;
+  tweetUrl: string;
+}
+
+interface CollectedImage {
+  url: string;
+  ext: string;
+  post: PostMetadata;
+  /** Position among the images attached to the same post, 0-based. */
+  indexInPost: number;
+}
+
 interface ProgressHandle {
   updateProgress: (current: number, total: number, phase: string) => void;
   updateStatus: (message: string) => void;
@@ -47,6 +63,71 @@ function triggerDownload(blob: Blob, filename: string): Promise<void> {
       reject(error);
     }
   });
+}
+
+const STATUS_HREF = /^\/([A-Za-z0-9_]+)\/status\/(\d+)/;
+
+/**
+ * Pulls the post details for an image: the handle, the post id, when it was
+ * posted, and the caption.
+ *
+ * The xitter-scraper version computed something like this and then discarded
+ * it, so the zip carried no context at all. Two things are done differently
+ * here. The handle comes from the permalink href rather than a display-name
+ * span, because the span holds whatever the account currently calls itself and
+ * moves whenever X reshuffles its markup, whereas the href is load-bearing for
+ * the site itself. And the post id is captured, which is what makes both a
+ * useful filename and a link back to the source possible.
+ */
+function getPostMetadata(article: Element): PostMetadata {
+  // Prefer the anchor wrapping the timestamp: other /status/ links inside an
+  // article can point at a quoted tweet rather than this one.
+  const links = Array.from(article.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]'));
+  const permalink = links.find((a) => a.querySelector('time')) || links[0];
+  const match = permalink?.getAttribute('href')?.match(STATUS_HREF);
+
+  const screenName = match?.[1] || '';
+  const tweetId = match?.[2] || '';
+
+  return {
+    screenName,
+    tweetId,
+    timestamp: article.querySelector('time')?.getAttribute('datetime') || '',
+    caption: article.querySelector('div[data-testid="tweetText"]')?.textContent?.trim() || '',
+    tweetUrl: screenName && tweetId ? `https://x.com/${screenName}/status/${tweetId}` : '',
+  };
+}
+
+/**
+ * Names a file so the zip is legible on its own, without opening a manifest.
+ * Date first so a plain alphabetical sort is chronological.
+ */
+type NameableImage = Pick<CollectedImage, 'ext' | 'post' | 'indexInPost'>;
+
+function imageFilename(img: NameableImage, fallbackIndex: number, used: Set<string>): string {
+  const { screenName, tweetId, timestamp } = img.post;
+
+  let base: string;
+  if (tweetId) {
+    const date = timestamp ? timestamp.slice(0, 10) : '';
+    base = [date, screenName, tweetId].filter(Boolean).join('_');
+    if (img.indexInPost > 0) base += `_${img.indexInPost + 1}`;
+  } else {
+    // No metadata found, so fall back to the old scheme rather than nothing
+    base = `image_${fallbackIndex}`;
+  }
+
+  // Collisions should be impossible, but a silently overwritten entry inside a
+  // zip is invisible, so make it structurally impossible instead.
+  let name = `${base}.${img.ext}`;
+  let n = 2;
+  while (used.has(name)) {
+    name = `${base}-${n}.${img.ext}`;
+    n++;
+  }
+  used.add(name);
+
+  return name;
 }
 
 function getHighestQualityUrl(url: string): string {
@@ -212,8 +293,11 @@ async function fetchWithRetry(url: string, maxRetries = 3): Promise<Response> {
 }
 
 async function collectImages(count: number, progress: ProgressHandle) {
-  const images: Array<{ url: string; ext: string }> = [];
+  const images: CollectedImage[] = [];
   const seen = new Set<string>();
+  // How many images already taken from each post, so multi-image tweets get
+  // distinguishable filenames instead of colliding.
+  const perPost = new Map<string, number>();
   let lastHeight = 0;
   let attempts = 0;
   const maxAttempts = 50;
@@ -234,7 +318,22 @@ async function collectImages(count: number, progress: ProgressHandle) {
       // which mattered once the count got into the hundreds.
       if (!seen.has(highQualityUrl)) {
         seen.add(highQualityUrl);
-        images.push({ url: highQualityUrl, ext: extensionForUrl(img.src) });
+
+        const article = img.closest('article[data-testid="tweet"]');
+        const post = article
+          ? getPostMetadata(article)
+          : { screenName: '', tweetId: '', timestamp: '', caption: '', tweetUrl: '' };
+
+        const postKey = post.tweetId || 'unknown';
+        const indexInPost = perPost.get(postKey) ?? 0;
+        perPost.set(postKey, indexInPost + 1);
+
+        images.push({
+          url: highQualityUrl,
+          ext: extensionForUrl(img.src),
+          post,
+          indexInPost,
+        });
       }
 
       progress.updateProgress(images.length, count, 'Collecting images');
@@ -254,15 +353,57 @@ async function collectImages(count: number, progress: ProgressHandle) {
 }
 
 async function createAndDownloadZip(
-  downloadedImages: Array<{ blob: Blob; ext: string }>,
+  downloadedImages: Array<{ blob: Blob; ext: string; post: PostMetadata; indexInPost: number }>,
   progress: ProgressHandle
 ): Promise<void> {
   progress.updateStatus('Creating zip file...');
   const zip = new JSZip();
 
+  const used = new Set<string>();
+  const records: Array<{
+    file: string;
+    tweetUrl: string;
+    screenName: string;
+    tweetId: string;
+    posted: string;
+    caption: string;
+  }> = [];
+
   downloadedImages.forEach((img, index) => {
-    zip.file(`image_${index + 1}.${img.ext}`, img.blob);
+    const name = imageFilename(img, index + 1, used);
+    zip.file(name, img.blob);
+
+    records.push({
+      file: name,
+      tweetUrl: img.post.tweetUrl,
+      screenName: img.post.screenName,
+      tweetId: img.post.tweetId,
+      posted: img.post.timestamp,
+      caption: img.post.caption,
+    });
   });
+
+  // Only ship a manifest if anything was actually captured. An empty one is
+  // just a file to delete.
+  if (records.some((r) => r.tweetId)) {
+    // JSON for anything that wants to process the archive
+    zip.file('metadata.json', JSON.stringify(records, null, 2) + '\n');
+
+    // And a readable version, since most people open the zip and look
+    const readable = records
+      .map((r) => {
+        const lines = [r.file];
+        if (r.screenName) lines.push(`  Account: @${r.screenName}`);
+        if (r.posted) lines.push(`  Posted: ${r.posted}`);
+        if (r.tweetUrl) lines.push(`  Post: ${r.tweetUrl}`);
+        // Keep captions on one line so entries stay scannable
+        if (r.caption) lines.push(`  Caption: ${r.caption.replace(/\s*\n\s*/g, ' ')}`);
+        return lines.join('\n');
+      })
+      .join('\n\n');
+
+    zip.file('metadata.txt', readable + '\n');
+  }
 
   progress.updateStatus('Generating zip...');
   // STORE, not DEFLATE: JPEG and PNG are already compressed, so deflating them
@@ -282,10 +423,15 @@ export async function handleImageCollection(count: number) {
   downloadAbortController = new AbortController();
 
   const progress = createProgressBar();
-  const downloadedImages: Array<{ blob: Blob; ext: string }> = [];
+  const downloadedImages: Array<{
+    blob: Blob;
+    ext: string;
+    post: PostMetadata;
+    indexInPost: number;
+  }> = [];
 
   try {
-    let collected: Array<{ url: string; ext: string }> = [];
+    let collected: CollectedImage[] = [];
 
     try {
       collected = await collectImages(count, progress);
@@ -306,7 +452,7 @@ export async function handleImageCollection(count: number) {
       // Stop early on cancel, but keep whatever already came down
       if (isDownloadCancelled && downloadedImages.length > 0) break;
 
-      const { url, ext } = collected[i];
+      const { url, ext, post, indexInPost } = collected[i];
 
       try {
         const response = await fetchWithRetry(url);
@@ -316,14 +462,16 @@ export async function handleImageCollection(count: number) {
             await handleRateLimit(progress);
             if (!isDownloadCancelled) {
               const retry = await fetchWithRetry(url);
-              if (retry.ok) downloadedImages.push({ blob: await retry.blob(), ext });
+              if (retry.ok) {
+                downloadedImages.push({ blob: await retry.blob(), ext, post, indexInPost });
+              }
             }
             continue;
           }
           throw new Error(`HTTP ${response.status}`);
         }
 
-        downloadedImages.push({ blob: await response.blob(), ext });
+        downloadedImages.push({ blob: await response.blob(), ext, post, indexInPost });
         progress.updateProgress(i + 1, collected.length, 'Downloading images');
       } catch (error) {
         if ((error as Error).name === 'AbortError') break;
