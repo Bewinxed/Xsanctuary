@@ -13,11 +13,30 @@
  */
 import { extractMediaFromJson, X_MEDIA_EVENT } from '@/utils/x-media';
 
-const API_URL_HINTS = ['/i/api/', '/graphql/', '/1.1/', '/2/timeline', '/i/api/2/'];
+const API_URL_HINTS = ['/i/api/', '/graphql/', '/1.1/', '/2/timeline'];
 
+const API_HOST = /(^|\.)(x|twitter)\.com$/;
+
+/**
+ * Matches the API requests X's own client makes.
+ *
+ * Parse rather than pattern-match the whole string: an earlier version tested
+ * /(^|\.)(x|twitter)\.com/ against the full URL, which requires the host to sit
+ * at the start of the string or follow a dot. In "https://x.com/i/api/..." it
+ * follows a slash, so every absolute API URL was rejected and nothing was ever
+ * captured. Comparing against a parsed hostname cannot fail that way.
+ */
 function looksLikeApiUrl(url: string): boolean {
-  if (!/(^|\.)(x|twitter)\.com/.test(url) && !url.startsWith('/')) return false;
-  return API_URL_HINTS.some((hint) => url.includes(hint));
+  let parsed: URL;
+  try {
+    // The base handles relative URLs, which X also uses
+    parsed = new URL(url, window.location.href);
+  } catch {
+    return false;
+  }
+
+  if (!API_HOST.test(parsed.hostname)) return false;
+  return API_URL_HINTS.some((hint) => parsed.pathname.includes(hint));
 }
 
 function toUrlString(input: unknown): string {

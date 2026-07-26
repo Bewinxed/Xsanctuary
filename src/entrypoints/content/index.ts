@@ -1196,6 +1196,17 @@ async function processImagesInTweet(tweet: Element) {
       }
     }
 
+    // X renders a video's poster frame as an <img> inside tweetPhoto, so this
+    // selector picks up videos too. Translating a poster frame is meaningless,
+    // and the button lands on top of the video download button. Skip anything
+    // whose container holds a <video>.
+    const mediaContainer = img.closest(
+      '[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="videoComponent"]'
+    );
+    if (mediaContainer?.querySelector('video')) {
+      return false;
+    }
+
     // Include all tweetPhoto images (main tweet and quoted tweets)
     return true;
   }) as HTMLImageElement[];

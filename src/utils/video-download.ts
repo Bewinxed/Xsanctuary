@@ -61,12 +61,29 @@ export type AudioFormatId = (typeof AUDIO_FORMATS)[number]['id'];
 
 const byTweetId = new LRUCache<string, XMediaRecord>(300);
 const byMediaKey = new LRUCache<string, XMediaRecord>(300);
+// Keyed by poster image path. The <video> element carries a poster attribute
+// that matches the media's thumbnail, which gives a DOM-level way to identify a
+// clip without depending on the tweet id surviving in the API response.
+const byPoster = new LRUCache<string, XMediaRecord>(300);
+
+/** Strips query and host so a poster URL compares stably. */
+function posterKey(url: string): string {
+  try {
+    return new URL(url, window.location.href).pathname;
+  } catch {
+    return url.split('?')[0];
+  }
+}
 
 // Resolves once the sniffer reports media for a tweet we're already waiting on
 const waiters = new Map<string, Array<(record: XMediaRecord) => void>>();
 
 function remember(record: XMediaRecord): void {
   byMediaKey.set(record.mediaKey, record);
+
+  if (record.poster) {
+    byPoster.set(posterKey(record.poster), record);
+  }
 
   if (record.tweetId) {
     byTweetId.set(record.tweetId, record);
@@ -82,6 +99,42 @@ function remember(record: XMediaRecord): void {
 function lookup(tweetId: string | null): XMediaRecord | null {
   if (!tweetId) return null;
   return byTweetId.get(tweetId) || null;
+}
+
+/**
+ * Second way in, for when the tweet id never made it into the response or the
+ * DOM lookup picked the wrong permalink. Matching on the poster frame is exact
+ * when it works, since both sides come from the same media object.
+ */
+function lookupByPoster(video: HTMLVideoElement): XMediaRecord | null {
+  const poster = video.getAttribute('poster');
+  if (!poster) return null;
+  return byPoster.get(posterKey(poster)) || null;
+}
+
+/**
+ * Finds the media for a video, trying the poster frame first because it is an
+ * exact match, then the tweet id, then waiting briefly in case the API response
+ * simply has not landed yet.
+ */
+async function resolveRecord(video: HTMLVideoElement): Promise<XMediaRecord | null> {
+  const byPosterNow = lookupByPoster(video);
+  if (byPosterNow) return byPosterNow;
+
+  const tweetId = tweetIdForVideo(video);
+  const byIdNow = lookup(tweetId);
+  if (byIdNow) return byIdNow;
+
+  // Nothing yet. Give the sniffer a moment, then try the poster once more,
+  // since a record arriving for a different tweet still populates that index.
+  if (tweetId) {
+    const waited = await waitForRecord(tweetId);
+    if (waited) return waited;
+  } else {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
+  return lookupByPoster(video);
 }
 
 /** Waits briefly for the sniffer to catch up — media JSON often lands after the DOM. */
@@ -325,8 +378,7 @@ async function openFormatMenu(
     document.addEventListener('keydown', onKeyDown, true);
   }, 0);
 
-  const tweetId = tweetIdForVideo(video);
-  const record = tweetId ? await waitForRecord(tweetId) : null;
+  const record = await resolveRecord(video);
 
   // The menu may have been closed or replaced while we waited
   if (activeMenu !== menu) return;

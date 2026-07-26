@@ -88,9 +88,10 @@
     manualKeyOpen = false;
     save();
   }
-  let models = $state<{ id: string; name: string }[]>([
-    { id: 'x-ai/grok-3-fast:free', name: 'Grok 3 Fast (Free)' },
+  let models = $state<{ id: string; name: string; free?: boolean }[]>([
+    { id: 'x-ai/grok-3-fast:free', name: 'Grok 3 Fast (Free)', free: true },
   ]);
+  let modelError = $state('');
   let loadingModels = $state(false);
   let modelSearchQuery = $state('');
   let modelComboboxOpen = $state(false);
@@ -229,6 +230,7 @@
     if (!settings.openRouterApiKey) return;
 
     loadingModels = true;
+    modelError = '';
     try {
       const res = await fetch('https://openrouter.ai/api/v1/models', {
         headers: {
@@ -238,23 +240,32 @@
 
       if (res.ok) {
         const data = await res.json();
-        // Filter for free models and sort by name
-        const freeModels = data.data
-          .filter((m: any) => m.id.includes(':free') || m.pricing?.prompt === '0')
+
+        // Every model, not just the free ones. Filtering to ':free' left 18 of
+        // 345 and made a live list look like a hardcoded stub.
+        const all = (data.data || [])
           .map((m: any) => ({
             id: m.id,
             name: m.name || m.id,
+            free: m.id.includes(':free') || m.pricing?.prompt === '0',
           }))
-          .sort((a: any, b: any) => a.name.localeCompare(b.name));
+          // Free first so it stays easy to find, then alphabetical
+          .sort((a: any, b: any) =>
+            a.free === b.free ? a.name.localeCompare(b.name) : a.free ? -1 : 1
+          );
 
-        // Add default if not in list
-        if (!freeModels.some((m: any) => m.id === 'x-ai/grok-3-fast:free')) {
-          freeModels.unshift({ id: 'x-ai/grok-3-fast:free', name: 'Grok 3 Fast (Free)' });
+        // Keep the current selection visible even if OpenRouter has dropped it,
+        // otherwise the trigger shows a model the list does not contain.
+        if (settings.llmModel && !all.some((m: any) => m.id === settings.llmModel)) {
+          all.unshift({ id: settings.llmModel, name: settings.llmModel, free: false });
         }
 
-        models = freeModels;
+        models = all;
+      } else {
+        modelError = `OpenRouter returned ${res.status}`;
       }
     } catch (e) {
+      modelError = e instanceof Error ? e.message : 'Could not reach OpenRouter';
       console.error('Failed to fetch models:', e);
     } finally {
       loadingModels = false;
@@ -660,6 +671,11 @@
             {loadingModels ? 'Loading...' : 'Refresh models'}
           </button>
         </div>
+        {#if modelError}
+          <p class="text-[10px] text-destructive">{modelError}</p>
+        {:else if models.length > 1}
+          <p class="text-[10px] text-muted-foreground">{models.length} models available</p>
+        {/if}
         <Popover.Root bind:open={modelComboboxOpen}>
           <Popover.Trigger class="w-full">
             <Button variant="outline" class="w-full justify-between h-8 text-xs">
@@ -685,8 +701,11 @@
                       modelSearchQuery = '';
                     }}
                   >
-                    <Check class="h-3 w-3 {settings.llmModel === model.id ? 'opacity-100' : 'opacity-0'}" />
+                    <Check class="h-3 w-3 shrink-0 {settings.llmModel === model.id ? 'opacity-100' : 'opacity-0'}" />
                     <span class="truncate">{model.name}</span>
+                    {#if model.free}
+                      <span class="ml-auto shrink-0 rounded bg-primary/20 px-1 text-[9px] text-primary">Free</span>
+                    {/if}
                   </button>
                 {/each}
               </Command.List>
