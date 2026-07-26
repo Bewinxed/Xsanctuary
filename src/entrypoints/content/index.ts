@@ -318,8 +318,14 @@ export default defineContentScript({
     // Listen for settings changes (store reference for cleanup)
     const storageListener = (changes: { [key: string]: { newValue?: unknown } }) => {
       if (changes.settings) {
-        cachedSettings = changes.settings.newValue as Settings;
-        refreshShowAllBubbles();
+        // Re-read rather than trusting newValue. Chrome storage can hand back
+        // an array as an object with numeric keys, and getSettings normalizes
+        // that; assigning the raw value made cachedSettings.rules an object,
+        // so .find() threw on the next tweet processed.
+        getSettings().then((next) => {
+          cachedSettings = next;
+          refreshShowAllBubbles();
+        });
       }
     };
     browser.storage.onChanged.addListener(storageListener);
@@ -2040,9 +2046,22 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
             el.translationEl.style.color = translation.textColor;
           }
           if (translation.bgColor) {
-            el.translationEl.style.backgroundColor = translation.bgColor;
-            if (translation.textColor) {
-              el.translationEl.style.borderColor = translation.textColor;
+            // In mask mode the clipped overlay is what fills the bubble, so
+            // colouring the inner text element leaves the shape stuck on the
+            // hardcoded white it was created with. Paint whichever element is
+            // actually carrying the shape.
+            const overlay = el.overlay;
+            const isMaskMode = overlay.style.clipPath && overlay.style.borderRadius === '0';
+
+            if (isMaskMode) {
+              overlay.style.background = translation.bgColor;
+              if (translation.textColor) overlay.style.borderColor = translation.textColor;
+              el.translationEl.style.backgroundColor = 'transparent';
+            } else {
+              el.translationEl.style.backgroundColor = translation.bgColor;
+              if (translation.textColor) {
+                el.translationEl.style.borderColor = translation.textColor;
+              }
             }
           }
           // Cache individual translation for lightbox

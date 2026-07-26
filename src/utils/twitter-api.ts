@@ -8,8 +8,51 @@ const MAX_QUEUE_SIZE = 50; // Prevent unbounded queue growth
 const requestQueue: Array<{ fn: () => Promise<void>; reject: (reason?: unknown) => void }> = [];
 let isProcessingQueue = false;
 
-// Minimum delay between API requests (ms)
-const REQUEST_DELAY_MS = 500;
+// Minimum delay between API requests (ms).
+//
+// X's GraphQL endpoints run on a 15 minute window, typically a few hundred
+// requests wide. The old 500ms floor sustained 1800 requests per window, which
+// blew the budget within a couple of minutes of normal scrolling and then sat
+// in backoff. This is a floor only: the real pacing comes from the rate limit
+// headers X returns on every response, read in noteRateLimitHeaders below.
+const REQUEST_DELAY_MS = 1500;
+
+// Live view of the current window, learned from response headers rather than
+// guessed. Null until the first response tells us.
+let limitRemaining: number | null = null;
+let limitResetAt = 0;
+
+/**
+ * X reports its budget on every response. Spreading the remaining requests
+ * across the time left in the window keeps us inside the limit instead of
+ * sprinting into a 429 and then stalling.
+ */
+function noteRateLimitHeaders(response: Response): void {
+  const remaining = Number(response.headers.get('x-rate-limit-remaining'));
+  const reset = Number(response.headers.get('x-rate-limit-reset'));
+
+  if (Number.isFinite(remaining) && response.headers.get('x-rate-limit-remaining')) {
+    limitRemaining = remaining;
+  }
+  if (Number.isFinite(reset) && reset > 0) {
+    limitResetAt = reset * 1000;
+  }
+}
+
+/** How long to wait before the next request, given what X last told us. */
+function pacingDelayMs(): number {
+  if (limitRemaining === null) return REQUEST_DELAY_MS;
+
+  const msLeft = limitResetAt - Date.now();
+  if (msLeft <= 0) return REQUEST_DELAY_MS;
+
+  // Nothing left in this window: wait it out rather than earning a 429
+  if (limitRemaining <= 0) return msLeft + 1000;
+
+  // Hold a small reserve so a burst of user-initiated actions still has room
+  const usable = Math.max(1, limitRemaining - 5);
+  return Math.max(REQUEST_DELAY_MS, Math.ceil(msLeft / usable));
+}
 
 // Rate limit state with exponential backoff
 let rateLimitedUntil = 0;
@@ -46,7 +89,7 @@ async function processQueue(): Promise<void> {
       } catch (error) {
         request.reject(error);
       }
-      await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY_MS));
+      await new Promise(resolve => setTimeout(resolve, pacingDelayMs()));
     }
   }
 
@@ -195,11 +238,15 @@ export async function fetchUserInfo(screenName: string): Promise<UserInfo | null
         },
       });
 
+      noteRateLimitHeaders(response);
+
       if (response.status === 429) {
-        // Rate limited - use exponential backoff
+        // Rate limited - use exponential backoff, but prefer X's own reset time
         consecutiveRateLimits++;
-        rateLimitedUntil = Date.now() + getBackoffMs();
-        console.warn(`[XSanctuary] Rate limited! Backing off ${Math.round(getBackoffMs() / 1000)}s`);
+        const headerWait = limitResetAt - Date.now();
+        const wait = headerWait > 0 ? headerWait + 1000 : getBackoffMs();
+        rateLimitedUntil = Date.now() + wait;
+        console.warn(`[XSanctuary] Rate limited, waiting ${Math.round(wait / 1000)}s`);
         return null;
       }
 
