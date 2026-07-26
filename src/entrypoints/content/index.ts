@@ -1969,7 +1969,47 @@ let pageTranslateCounter = 0;
  * is what happened before, loses pronouns, honorifics, speaker voice and any
  * joke that pays off a panel later, and costs one request per bubble.
  */
+
+// Bubbles per request. Elements arrive in generation order, so one request for
+// a whole page means the last bubble waits on every one before it. Splitting
+// into chunks that run concurrently cuts the wall clock roughly by the number
+// of chunks. Kept reasonably large so a chunk still spans a real exchange
+// rather than isolated lines, which was the point of batching.
+const BUBBLES_PER_REQUEST = 6;
+
+/**
+ * Translates every bubble on a page, in parallel chunks when there are enough
+ * to be worth splitting.
+ */
 async function translateBubblesAsPage(
+  elements: BubbleOverlayEl[],
+  imageUrl: string,
+  detectionResult: DetectionResult
+): Promise<boolean> {
+  if (elements.length === 0) return true;
+
+  // A short page fits in one request, which keeps the whole conversation in
+  // context and is already fast enough.
+  if (elements.length <= BUBBLES_PER_REQUEST + 2) {
+    return translateBubbleChunk(elements, imageUrl, detectionResult);
+  }
+
+  const chunks: BubbleOverlayEl[][] = [];
+  for (let i = 0; i < elements.length; i += BUBBLES_PER_REQUEST) {
+    chunks.push(elements.slice(i, i + BUBBLES_PER_REQUEST));
+  }
+
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      translateBubbleChunk(chunk, imageUrl, detectionResult).catch(() => false)
+    )
+  );
+
+  // One failed chunk should not discard the ones that worked
+  return results.some(Boolean);
+}
+
+async function translateBubbleChunk(
   elements: BubbleOverlayEl[],
   imageUrl: string,
   detectionResult: DetectionResult

@@ -1052,9 +1052,17 @@ async function composeBubbleSheet(
     scaleY = imageBitmap.height / originalHeight;
   }
 
-  const GUTTER = 56; // room for the index label
-  const GAP = 12;
-  const MAX_WIDTH = 720; // keeps the strip within sane token cost
+  // A grid, not a single column. A tall strip of 12 bubbles is ~776x2316,
+  // which is a large vision prefill before the model emits anything. The same
+  // bubbles in a grid land near 1400x900, cutting the tile count by roughly
+  // four and with it the wait for the first translation.
+  const CELL_W = 340;
+  const CELL_H = 240;
+  const LABEL = 30;
+  const GAP = 10;
+
+  const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(bubbles.length))));
+  const rows = Math.ceil(bubbles.length / cols);
 
   const crops = bubbles.map((bubble) => {
     const x1 = Math.max(0, bubble.bbox.x1 * scaleX - padding);
@@ -1064,48 +1072,45 @@ async function composeBubbleSheet(
     return { x1, y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
   });
 
-  // Scale anything unusually wide down rather than letting one panel set the
-  // width of the whole sheet.
-  const contentWidth = Math.min(MAX_WIDTH, Math.max(...crops.map((c) => c.w), 1));
+  const cellW = CELL_W + GAP;
+  const cellH = CELL_H + LABEL + GAP;
 
-  const placed = crops.map((c) => {
-    const scale = Math.min(1, contentWidth / c.w);
-    return { ...c, dw: Math.round(c.w * scale), dh: Math.round(c.h * scale) };
-  });
-
-  const totalHeight = placed.reduce((sum, c) => sum + c.dh + GAP, GAP);
-  const canvas = new OffscreenCanvas(contentWidth + GUTTER, totalHeight);
+  const canvas = new OffscreenCanvas(cols * cellW + GAP, rows * cellH + GAP);
   const ctx = canvas.getContext('2d')!;
-
-  // A flat background keeps transparent PNG crops legible
   ctx.fillStyle = '#F2F2F2';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const colors: Array<{ bgColor: string; textColor: string } | null> = [];
 
-  let y = GAP;
-  placed.forEach((c, i) => {
-    ctx.drawImage(imageBitmap, c.x1, c.y1, c.w, c.h, GUTTER, y, c.dw, c.dh);
+  crops.forEach((c, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const cx = GAP + col * cellW;
+    const cy = GAP + row * cellH;
 
-    // Sample from what was just drawn, so the numbers and separators added
-    // below are never included in the reading.
-    colors.push(sampleBubbleColors(ctx, GUTTER, y, c.dw, c.dh));
-
-    // Separator so adjacent bubbles do not read as one image
-    ctx.strokeStyle = '#B0B0B0';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(GUTTER + 0.5, y + 0.5, c.dw - 1, c.dh - 1);
+    // Only ever shrink: upscaling a small bubble adds no detail for OCR
+    const scale = Math.min(1, CELL_W / c.w, CELL_H / c.h);
+    const dw = Math.max(1, Math.round(c.w * scale));
+    const dh = Math.max(1, Math.round(c.h * scale));
 
     ctx.fillStyle = '#111111';
-    ctx.font = 'bold 26px system-ui, sans-serif';
-    ctx.textAlign = 'right';
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(String(i + 1), GUTTER - 12, y + 4);
+    ctx.fillText(String(i + 1), cx, cy);
 
-    y += c.dh + GAP;
+    const iy = cy + LABEL;
+    ctx.drawImage(imageBitmap, c.x1, c.y1, c.w, c.h, cx, iy, dw, dh);
+
+    // Sample the drawn crop before any separator is stroked over it
+    colors.push(sampleBubbleColors(ctx, cx, iy, dw, dh));
+
+    ctx.strokeStyle = '#B0B0B0';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(cx + 0.5, iy + 0.5, dw - 1, dh - 1);
   });
 
-  const blob = await canvas.convertToBlob({ type: 'image/png' });
+  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.88 });
   const base64 = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result as string);
