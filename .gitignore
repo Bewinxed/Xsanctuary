@@ -29,3 +29,6 @@ web-ext.config.ts
 # support to replace it; leaking it means someone else can sign uploads.
 *.pem
 *.crx
+
+# Store submission notes are kept locally, not published
+store/
