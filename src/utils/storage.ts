@@ -29,6 +29,7 @@ export interface ComicTranslationSettings {
   bubbleModel: string; // User-selected model for bubble OCR
   confidenceThreshold: number; // Detection confidence 0.1 to 1.0
   bubbleShape: BubbleShapeMode; // Shape of translation overlay
+  showAllBubbles: boolean; // Reveal every translation at once instead of on hover
 }
 
 export interface LocationIntelligenceSettings {
@@ -63,6 +64,7 @@ const defaultComicTranslationSettings: ComicTranslationSettings = {
   bubbleModel: 'google/gemini-2.5-flash',
   confidenceThreshold: 0.3, // Default 0.3 for more sensitive detection
   bubbleShape: 'mask', // Default to using actual detected bubble shape
+  showAllBubbles: false, // Hover reveal stays the default; this shows them all
 };
 
 // Off until asked for. Downloading media is what this extension is for; the

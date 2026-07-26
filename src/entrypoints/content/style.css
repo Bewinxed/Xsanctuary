@@ -1259,3 +1259,44 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
     transition: none;
   }
 }
+
+/* ==========================================================================
+   Show all bubble translations at once
+   Same end state as hovering every bubble, without the hovering.
+   ========================================================================== */
+
+.xsanctuary-bubble-container.xsanctuary-show-all .xsanctuary-bubble-overlay {
+  /* Kill the attention-seeking hint pulse: nothing needs pointing at when
+     everything is already visible. */
+  animation: none;
+}
+
+.xsanctuary-bubble-container.xsanctuary-show-all
+  .xsanctuary-bubble-overlay.xsanctuary-bubble-fetched:not([style*="clip-path"]) {
+  border: none;
+}
+
+.xsanctuary-bubble-container.xsanctuary-show-all
+  .xsanctuary-bubble-overlay.xsanctuary-bubble-fetched
+  .xsanctuary-bubble-translation {
+  opacity: 1;
+  /* A transition rather than the hover keyframe, so toggling the setting
+     fades them in once instead of replaying an animation per bubble. */
+  transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* Bubbles still waiting on their translation stay hidden rather than showing
+   an empty box, so the reveal tracks what has actually arrived. */
+.xsanctuary-bubble-container.xsanctuary-show-all
+  .xsanctuary-bubble-overlay.xsanctuary-bubble-loading-state
+  .xsanctuary-bubble-translation {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xsanctuary-bubble-container.xsanctuary-show-all
+    .xsanctuary-bubble-overlay.xsanctuary-bubble-fetched
+    .xsanctuary-bubble-translation {
+    transition: none;
+  }
+}

@@ -33,6 +33,7 @@
       bubbleModel: 'google/gemini-2.5-flash',
       confidenceThreshold: 0.3,
       bubbleShape: 'mask',
+      showAllBubbles: false,
     },
     videoDownload: {
       enabled: true,
@@ -859,6 +860,20 @@
           <p class="text-[10px] text-muted-foreground">
             Lower = more bubbles detected (may include false positives)
           </p>
+        </div>
+
+        <!-- Reveal all translations at once -->
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <Label class="text-xs text-muted-foreground">Show all translations</Label>
+            <p class="mt-0.5 text-[10px] leading-relaxed text-muted-foreground/80">
+              Reveal every bubble as soon as it is translated, instead of one at a time on hover.
+            </p>
+          </div>
+          <Switch
+            checked={settings.comicTranslation.showAllBubbles}
+            onCheckedChange={(checked) => updateComicTranslation('showAllBubbles', checked)}
+          />
         </div>
 
         <!-- Bubble Shape -->

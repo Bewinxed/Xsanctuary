@@ -319,6 +319,7 @@ export default defineContentScript({
     const storageListener = (changes: { [key: string]: { newValue?: unknown } }) => {
       if (changes.settings) {
         cachedSettings = changes.settings.newValue as Settings;
+        refreshShowAllBubbles();
       }
     };
     browser.storage.onChanged.addListener(storageListener);
@@ -1436,6 +1437,7 @@ function addBubbleOverlaysToLightbox(img: HTMLImageElement, imageUrl: string, de
   // Create overlay container - position it to match the image exactly
   const overlayContainer = document.createElement('div');
   overlayContainer.className = 'xsanctuary-bubble-container xsanctuary-lightbox-overlay';
+  applyShowAllBubbles(overlayContainer);
 
   // Use absolute positioning to cover the image, matching Twitter's existing structure
   overlayContainer.style.cssText = `
@@ -1903,6 +1905,26 @@ async function detectAndProcessComic(img: HTMLImageElement, imageUrl: string, fo
   return detectionResult;
 }
 
+const SHOW_ALL_CLASS = 'xsanctuary-show-all';
+
+/** Marks a container so CSS reveals every finished translation at once. */
+function applyShowAllBubbles(container: HTMLElement) {
+  container.classList.toggle(
+    SHOW_ALL_CLASS,
+    !!cachedSettings?.comicTranslation?.showAllBubbles
+  );
+}
+
+/**
+ * Retargets every overlay already on the page when the setting changes, so the
+ * toggle takes effect on what is on screen instead of only on the next image.
+ */
+function refreshShowAllBubbles() {
+  document
+    .querySelectorAll<HTMLElement>('.xsanctuary-bubble-container')
+    .forEach(applyShowAllBubbles);
+}
+
 function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionResult: DetectionResult) {
   const container = img.closest('div[data-testid="tweetPhoto"]') as HTMLElement;
   if (!container) return;
@@ -1918,6 +1940,7 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
   // Create overlay container that sits on top of the image
   const overlayContainer = document.createElement('div');
   overlayContainer.className = 'xsanctuary-bubble-container';
+  applyShowAllBubbles(overlayContainer);
 
   // Track overlay elements for batch translation
   const overlayElements: Array<{ overlay: HTMLElement; translationEl: HTMLElement; bubble: BubbleDetection }> = [];
