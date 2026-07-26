@@ -237,8 +237,19 @@ jobs:
           cat /tmp/cws-response.json || true
           echo
 
+          MESSAGE=$(jq -r '.error.message // ""' /tmp/cws-response.json 2>/dev/null || echo "")
+
+          # An item under review is locked against edits. That is a normal state
+          # to land in, not a broken pipeline, and the GitHub release above
+          # succeeded either way. Warn and stop rather than going red, so a real
+          # failure stays distinguishable from waiting on Google.
+          if printf '%s' "$MESSAGE" | grep -qi "in review"; then
+            echo "::warning::Version ${{ steps.version.outputs.version }} was not uploaded: the store item is currently in review and locked. Re-run this workflow once the review finishes."
+            exit 0
+          fi
+
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Store rejected the upload with HTTP $HTTP_CODE: $(jq -r '.error.message // .' /tmp/cws-response.json 2>/dev/null || cat /tmp/cws-response.json)"
+            echo "::error::Store rejected the upload with HTTP $HTTP_CODE: ${MESSAGE:-$(cat /tmp/cws-response.json)}"
             exit 1
           fi
 
