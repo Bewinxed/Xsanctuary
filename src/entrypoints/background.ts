@@ -1,5 +1,6 @@
 import { getLlmCacheKey, getCachedLlmResponse, setCachedLlmResponse, clearLlmCache } from '@/utils/cache';
 import { connectOpenRouter } from '@/utils/openrouter-auth';
+import { translatePage } from '@/utils/page-translate';
 import { setApiKey } from '@/utils/storage';
 import {
   fetchAvailableModels,
@@ -194,6 +195,13 @@ export default defineBackground(() => {
       return true;
     }
 
+    if (message.type === 'COMPOSE_BUBBLE_SHEET') {
+      sendToOffscreen(message)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
     if (message.type === 'YOLO_CROP_BUBBLE') {
       sendToOffscreen(message)
         .then(sendResponse)
@@ -242,6 +250,18 @@ export default defineBackground(() => {
       return;
     }
 
+    if (message.type === 'TRANSLATE_PAGE') {
+      const tabId = sender.tab?.id;
+      if (!tabId) {
+        sendResponse({ error: 'No tab to stream into' });
+        return true;
+      }
+      handlePageTranslate(message, tabId)
+        .then(sendResponse)
+        .catch((e) => sendResponse({ error: e.message }));
+      return true;
+    }
+
     if (message.type === 'OPENROUTER_CONNECT') {
       handleOpenRouterConnect()
         .then(sendResponse)
@@ -284,6 +304,54 @@ async function handleOpenRouterConnect(): Promise<{ success?: boolean; canceled?
 
   await setApiKey(result.key);
   return { success: true };
+}
+
+/**
+ * Translates every bubble on a page in one call, relaying each result to the
+ * content script as it is validated so bubbles fill in progressively rather
+ * than all at once at the end.
+ */
+async function handlePageTranslate(
+  message: {
+    apiKey: string;
+    model: string;
+    sheetBase64: string;
+    bubbleCount: number;
+    targetLanguage: string;
+    streamId: string;
+  },
+  tabId: number
+): Promise<{ count?: number; error?: string }> {
+  const result = await translatePage({
+    apiKey: message.apiKey,
+    model: message.model,
+    sheetBase64: message.sheetBase64,
+    bubbleCount: message.bubbleCount,
+    targetLanguage: message.targetLanguage,
+    onBubble: (bubble) => {
+      browser.tabs
+        .sendMessage(tabId, {
+          type: 'PAGE_TRANSLATION_BUBBLE',
+          streamId: message.streamId,
+          bubble,
+        })
+        .catch(() => {
+          // Tab closed or navigated away mid-stream
+        });
+    },
+  });
+
+  browser.tabs
+    .sendMessage(tabId, {
+      type: 'PAGE_TRANSLATION_DONE',
+      streamId: message.streamId,
+      error: result.error,
+    })
+    .catch(() => {});
+
+  return result.error
+    ? { count: result.translations.length, error: result.error }
+    : { count: result.translations.length };
 }
 
 // ============================================================================

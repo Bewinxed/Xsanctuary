@@ -60,9 +60,12 @@
   },
   "dependencies": {
     "@mediabunny/mp3-encoder": "^1.51.0",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "ai": "^7.0.37",
     "country-flag-icons": "^1.6.4",
     "jszip": "^3.10.1",
     "mediabunny": "^1.51.0",
-    "onnxruntime-web": "^1.23.2"
+    "onnxruntime-web": "^1.23.2",
+    "zod": "^4.4.3"
   }
 }

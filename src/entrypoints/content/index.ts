@@ -1911,6 +1911,136 @@ async function detectAndProcessComic(img: HTMLImageElement, imageUrl: string, fo
   return detectionResult;
 }
 
+
+// ---------------------------------------------------------------------------
+// Whole-page bubble translation
+// ---------------------------------------------------------------------------
+
+interface BubbleOverlayEl {
+  overlay: HTMLElement;
+  translationEl: HTMLElement;
+  bubble: BubbleDetection;
+}
+
+/**
+ * Paints a finished translation onto its bubble. Shared by both the page-level
+ * and per-bubble paths so colour handling cannot drift between them.
+ */
+function applyBubbleTranslation(
+  el: BubbleOverlayEl,
+  translation: { text: string; textColor?: string; bgColor?: string }
+) {
+  el.translationEl.textContent = translation.text;
+
+  if (translation.textColor) {
+    el.translationEl.style.color = translation.textColor;
+  }
+
+  if (translation.bgColor) {
+    // In mask mode the clipped overlay is the shape being filled, so colouring
+    // the inner element would leave the bubble on its default white.
+    const isMaskMode =
+      el.overlay.style.clipPath && el.overlay.style.borderRadius === '0';
+
+    if (isMaskMode) {
+      el.overlay.style.background = translation.bgColor;
+      if (translation.textColor) el.overlay.style.borderColor = translation.textColor;
+      el.translationEl.style.backgroundColor = 'transparent';
+    } else {
+      el.translationEl.style.backgroundColor = translation.bgColor;
+      if (translation.textColor) el.translationEl.style.borderColor = translation.textColor;
+    }
+  }
+
+  requestAnimationFrame(() => fitTextToBubble(el.translationEl, el.bubble.maskPath));
+  el.overlay.classList.remove('xsanctuary-bubble-loading-state');
+  el.overlay.classList.add('xsanctuary-bubble-fetched');
+  // Drives the fade-in for bubbles arriving mid-stream
+  el.overlay.classList.add('xsanctuary-bubble-arrived');
+}
+
+let pageTranslateCounter = 0;
+
+/**
+ * Translates every bubble on an image in one request.
+ *
+ * The bubbles are composited into a single numbered strip so the model sees
+ * the whole conversation at once. Translating each bubble in isolation, which
+ * is what happened before, loses pronouns, honorifics, speaker voice and any
+ * joke that pays off a panel later, and costs one request per bubble.
+ */
+async function translateBubblesAsPage(
+  elements: BubbleOverlayEl[],
+  imageUrl: string,
+  detectionResult: DetectionResult
+): Promise<boolean> {
+  if (elements.length === 0) return true;
+
+  const streamId = `xs-page-${++pageTranslateCounter}-${Date.now()}`;
+
+  const sheet = await browser.runtime.sendMessage({
+    type: 'COMPOSE_BUBBLE_SHEET',
+    imageUrl,
+    bubbles: elements.map((el) => el.bubble),
+    padding: 12,
+    originalWidth: detectionResult.imageWidth,
+    originalHeight: detectionResult.imageHeight,
+  });
+
+  if (!sheet?.base64) {
+    console.warn('[XSanctuary] Could not build bubble sheet:', sheet?.error);
+    return false;
+  }
+
+  // Bubbles land as the model finishes each one, so the page fills in rather
+  // than sitting blank until the whole request completes.
+  const onMessage = (msg: {
+    type?: string;
+    streamId?: string;
+    bubble?: { index: number; text: string; textColor?: string; bgColor?: string };
+  }) => {
+    if (msg?.type !== 'PAGE_TRANSLATION_BUBBLE' || msg.streamId !== streamId) return;
+    const b = msg.bubble;
+    if (!b) return;
+
+    // The model reads the index off the image, so it is 1-based and can be
+    // wrong. Ignore anything outside the range rather than throwing.
+    const el = elements[b.index - 1];
+    if (!el) return;
+
+    applyBubbleTranslation(el, b);
+    const key = getBubbleKey(imageUrl, el.bubble);
+    bubbleTranslationCache.set(
+      key,
+      JSON.stringify({ text: b.text, textColor: b.textColor, bgColor: b.bgColor })
+    );
+  };
+
+  browser.runtime.onMessage.addListener(onMessage);
+
+  try {
+    const result = await browser.runtime.sendMessage({
+      type: 'TRANSLATE_PAGE',
+      apiKey: cachedSettings?.openRouterApiKey,
+      model: cachedSettings?.comicTranslation.bubbleModel || 'google/gemini-2.5-flash',
+      sheetBase64: sheet.base64,
+      bubbleCount: elements.length,
+      targetLanguage: cachedSettings?.comicTranslation.targetLanguage || 'en',
+      streamId,
+    });
+
+    if (result?.error) {
+      console.warn('[XSanctuary] Page translation error:', result.error);
+      return false;
+    }
+    return true;
+  } finally {
+    browser.runtime.onMessage.removeListener(onMessage);
+    // Anything the model skipped should stop looking like it is still loading
+    elements.forEach((el) => el.overlay.classList.remove('xsanctuary-bubble-loading-state'));
+  }
+}
+
 const SHOW_ALL_CLASS = 'xsanctuary-show-all';
 
 /** Marks a container so CSS reveals every finished translation at once. */
@@ -2086,16 +2216,26 @@ function addBubbleOverlays(img: HTMLImageElement, imageUrl: string, detectionRes
     });
   }
 
-  // Fetch translations for YOLO bubbles individually (need image cropping)
-  for (const el of yoloBubbles) {
-    fetchBubbleTranslation(el.translationEl, imageUrl, el.bubble, detectionResult.imageWidth, detectionResult.imageHeight)
-      .then(() => {
-        el.overlay.classList.remove('xsanctuary-bubble-loading-state');
-        el.overlay.classList.add('xsanctuary-bubble-fetched');
+  // Translate all YOLO bubbles together so the model has the whole page as
+  // context. Falls back to per-bubble requests if that path fails, which keeps
+  // a bad sheet or a model that ignores the schema from losing the feature.
+  if (yoloBubbles.length > 0) {
+    translateBubblesAsPage(yoloBubbles, imageUrl, detectionResult)
+      .then((ok) => {
+        if (ok) return;
+        console.warn('[XSanctuary] Falling back to per-bubble translation');
+        for (const el of yoloBubbles) {
+          fetchBubbleTranslation(el.translationEl, imageUrl, el.bubble, detectionResult.imageWidth, detectionResult.imageHeight)
+            .then(() => {
+              el.overlay.classList.remove('xsanctuary-bubble-loading-state');
+              el.overlay.classList.add('xsanctuary-bubble-fetched');
+            })
+            .catch(() => el.overlay.classList.remove('xsanctuary-bubble-loading-state'));
+        }
       })
       .catch((err) => {
-        console.error('[XSanctuary] Failed to fetch bubble translation:', err);
-        el.overlay.classList.remove('xsanctuary-bubble-loading-state');
+        console.error('[XSanctuary] Page translation failed:', err);
+        yoloBubbles.forEach((el) => el.overlay.classList.remove('xsanctuary-bubble-loading-state'));
       });
   }
 }

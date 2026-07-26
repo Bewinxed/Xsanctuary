@@ -901,6 +901,99 @@ async function performOCR(imageUrl: string): Promise<OCRResult> {
 }
 
 // ============================================================================
+// Bubble sheet compositing
+// ============================================================================
+
+/**
+ * Stacks every bubble crop into one numbered image, in reading order.
+ *
+ * Sending one strip rather than a request per bubble is what gives the model
+ * the whole conversation at once, which is the difference between translating
+ * a line and translating a scene. The printed numbers are what make the
+ * returned indexes trustworthy, since the model is reading them off the image
+ * rather than counting.
+ */
+async function composeBubbleSheet(
+  imageUrl: string,
+  bubbles: BubbleDetection[],
+  padding: number,
+  originalWidth?: number,
+  originalHeight?: number
+): Promise<{ base64: string; count: number }> {
+  const response = await fetch(imageUrl);
+  if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
+  const imageBitmap = await createImageBitmap(await response.blob());
+
+  let scaleX = 1;
+  let scaleY = 1;
+  if (
+    originalWidth &&
+    originalHeight &&
+    (imageBitmap.width !== originalWidth || imageBitmap.height !== originalHeight)
+  ) {
+    scaleX = imageBitmap.width / originalWidth;
+    scaleY = imageBitmap.height / originalHeight;
+  }
+
+  const GUTTER = 56; // room for the index label
+  const GAP = 12;
+  const MAX_WIDTH = 720; // keeps the strip within sane token cost
+
+  const crops = bubbles.map((bubble) => {
+    const x1 = Math.max(0, bubble.bbox.x1 * scaleX - padding);
+    const y1 = Math.max(0, bubble.bbox.y1 * scaleY - padding);
+    const x2 = Math.min(imageBitmap.width, bubble.bbox.x2 * scaleX + padding);
+    const y2 = Math.min(imageBitmap.height, bubble.bbox.y2 * scaleY + padding);
+    return { x1, y1, w: Math.max(1, x2 - x1), h: Math.max(1, y2 - y1) };
+  });
+
+  // Scale anything unusually wide down rather than letting one panel set the
+  // width of the whole sheet.
+  const contentWidth = Math.min(MAX_WIDTH, Math.max(...crops.map((c) => c.w), 1));
+
+  const placed = crops.map((c) => {
+    const scale = Math.min(1, contentWidth / c.w);
+    return { ...c, dw: Math.round(c.w * scale), dh: Math.round(c.h * scale) };
+  });
+
+  const totalHeight = placed.reduce((sum, c) => sum + c.dh + GAP, GAP);
+  const canvas = new OffscreenCanvas(contentWidth + GUTTER, totalHeight);
+  const ctx = canvas.getContext('2d')!;
+
+  // A flat background keeps transparent PNG crops legible
+  ctx.fillStyle = '#F2F2F2';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  let y = GAP;
+  placed.forEach((c, i) => {
+    ctx.drawImage(imageBitmap, c.x1, c.y1, c.w, c.h, GUTTER, y, c.dw, c.dh);
+
+    // Separator so adjacent bubbles do not read as one image
+    ctx.strokeStyle = '#B0B0B0';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(GUTTER + 0.5, y + 0.5, c.dw - 1, c.dh - 1);
+
+    ctx.fillStyle = '#111111';
+    ctx.font = 'bold 26px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'top';
+    ctx.fillText(String(i + 1), GUTTER - 12, y + 4);
+
+    y += c.dh + GAP;
+  });
+
+  const blob = await canvas.convertToBlob({ type: 'image/png' });
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+  return { base64, count: bubbles.length };
+}
+
+// ============================================================================
 // Media download / conversion (mediabunny)
 // ============================================================================
 
@@ -994,6 +1087,15 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, _sender:
         case 'PADDLE_OCR': {
           const result = await performOCR(message.imageUrl as string);
           return result;
+        }
+        case 'COMPOSE_BUBBLE_SHEET': {
+          return await composeBubbleSheet(
+            message.imageUrl as string,
+            message.bubbles as BubbleDetection[],
+            (message.padding as number) ?? 12,
+            message.originalWidth as number | undefined,
+            message.originalHeight as number | undefined
+          );
         }
         case 'AUDIO_CAPABILITIES': {
           const codecs = await probeAudioCodecs();

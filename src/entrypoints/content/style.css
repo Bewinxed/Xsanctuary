@@ -1300,3 +1300,27 @@ div[data-testid="tweetPhoto"]:hover .xsanctuary-image-translate-btn {
     transition: none;
   }
 }
+
+/* Bubbles arriving mid-stream fade in individually, so the page fills in as
+   the model works rather than snapping in all at once at the end. */
+.xsanctuary-bubble-overlay.xsanctuary-bubble-arrived .xsanctuary-bubble-translation {
+  animation: xsanctuary-bubble-arrive 260ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes xsanctuary-bubble-arrive {
+  from {
+    opacity: 0;
+    /* Never from scale(0); a hair under full size reads as settling in */
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xsanctuary-bubble-overlay.xsanctuary-bubble-arrived .xsanctuary-bubble-translation {
+    animation: none;
+  }
+}
