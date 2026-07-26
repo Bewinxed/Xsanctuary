@@ -15,18 +15,21 @@ what draws scrutiny.
 XSanctuary: X Media Downloader
 ```
 
-30 characters. Keeping a descriptive tail rather than the bare word makes the
-purpose legible to users and reviewers alike.
+30 characters. Downloading is the main function and what existing users
+installed, so leading with it is fair. It is not the only function, which the
+description has to make clear rather than leaving the name to imply otherwise.
 
 ---
 
 ## Short description (132 characters max)
 
 ```
-Download images, video and audio from X. Pick the resolution, or save just the audio. Everything runs in your browser.
+Download images, video and audio from X, at the quality you choose. Optional country labels and in-image translation.
 ```
 
-117 characters.
+116 characters. The earlier draft said only "everything runs in your browser"
+and left the optional features out entirely, which made a 132 character field
+do the work of hiding two of them.
 
 ---
 
@@ -38,9 +41,18 @@ Productivity
 
 ## Single purpose description
 
+This field is an attestation, not marketing. It has to describe what the
+package actually contains, because a reviewer reads it next to the code.
+
 ```
-XSanctuary downloads media from X.com. It saves images in bulk from a profile, saves video and GIFs at a resolution the user chooses, and extracts the audio track from a video as an audio file. Everything it does serves the purpose of getting media off X and onto the user's computer.
+XSanctuary is a tool for working with content on X.com. Its main function is downloading media: bulk profile images, video and GIFs at a resolution the user picks, and audio extracted from a video. It also ships two features that are disabled by default and do nothing until the user turns them on: showing which country an account posts from, with optional filtering of the timeline by country, and translating text found in timeline images.
 ```
+
+Note honestly that this describes more than one purpose. Off by default
+reduces what a user is enrolled in without asking; it does not make a shipped
+feature stop being a purpose. If the goal is a single purpose statement that is
+actually true, the location and translation features have to move to a separate
+item. See "If this is rejected" below.
 
 ---
 
@@ -150,6 +162,31 @@ stated purpose. Replace them, in this order:
 5. The popup, with the optional features switched off
 
 Required sizes: 1280x800 or 640x400. A 440x280 promo tile is also required.
+
+---
+
+## If this is rejected
+
+A single purpose rejection is a realistic outcome and is not a disaster. It
+comes back as a rejection with guidance, not a strike, and the fix is already
+most of the way done because the features are cleanly separated in the code.
+
+The split, if it comes to that:
+
+- This item keeps downloading: images, video, audio. That makes the single
+  purpose statement straightforwardly true, and existing users get a
+  strict upgrade of the thing they installed.
+- A second item takes the location features and comic translation.
+
+Same repository, two build targets. WXT can produce both from one source with
+different manifests and entrypoint sets, so it does not mean maintaining a
+fork.
+
+What is not a good idea is describing fewer features than the package contains
+in order to get through. Undisclosed functionality is treated more seriously
+than multi-purpose packaging, it is checked against the code rather than the
+listing, and an approval obtained that way is worth less than a rejection
+because it can be revisited against the whole developer account later.
 
 ---
 
