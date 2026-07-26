@@ -1992,6 +1992,26 @@ async function translateBubblesAsPage(
     return false;
   }
 
+  // Colours are measured from the pixels while compositing, so they can be
+  // applied now rather than waiting on the model. Sampling beats asking: it is
+  // exact, free, and right for sound effects on coloured panels where the
+  // usual black-on-white assumption is simply wrong.
+  const sampled: Array<{ bgColor: string; textColor: string } | null> = sheet.colors || [];
+  sampled.forEach((colors, i) => {
+    const el = elements[i];
+    if (!el || !colors) return;
+    const isMaskMode = el.overlay.style.clipPath && el.overlay.style.borderRadius === '0';
+    if (isMaskMode) {
+      el.overlay.style.background = colors.bgColor;
+      el.overlay.style.borderColor = colors.textColor;
+      el.translationEl.style.backgroundColor = 'transparent';
+    } else {
+      el.translationEl.style.backgroundColor = colors.bgColor;
+      el.translationEl.style.borderColor = colors.textColor;
+    }
+    el.translationEl.style.color = colors.textColor;
+  });
+
   // Bubbles land as the model finishes each one, so the page fills in rather
   // than sitting blank until the whole request completes.
   const onMessage = (msg: {
@@ -2008,7 +2028,14 @@ async function translateBubblesAsPage(
     const el = elements[b.index - 1];
     if (!el) return;
 
-    applyBubbleTranslation(el, b);
+    // Measured colours win; the model's are only a fallback for bubbles the
+    // sampler declined, such as a flat patch with nothing to separate.
+    const measured = sampled[b.index - 1];
+    applyBubbleTranslation(el, {
+      text: b.text,
+      textColor: measured?.textColor ?? b.textColor,
+      bgColor: measured?.bgColor ?? b.bgColor,
+    });
     const key = getBubbleKey(imageUrl, el.bubble);
     bubbleTranslationCache.set(
       key,

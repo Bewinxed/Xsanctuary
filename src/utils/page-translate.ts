@@ -18,12 +18,10 @@ import { z } from 'zod';
 export const bubbleTranslationSchema = z.object({
   index: z.number().int().describe('The number printed beside the bubble in the strip'),
   text: z.string().describe('The translated line, kept short enough to fit the bubble'),
-  textColor: z
-    .string()
-    .describe('Hex colour for the text, sampled from the original bubble, e.g. #000000'),
-  bgColor: z
-    .string()
-    .describe('Hex colour for the bubble interior, sampled from the original, e.g. #FFFFFF'),
+  // Colours are measured from the pixels, not asked for. These stay as an
+  // optional fallback for bubbles the sampler declined to judge.
+  textColor: z.string().optional(),
+  bgColor: z.string().optional(),
 });
 
 export type BubbleTranslation = z.infer<typeof bubbleTranslationSchema>;
@@ -38,7 +36,6 @@ Because you can see all ${count} bubbles at once, use that: they are one continu
 For each bubble return:
 - index: the number printed beside it
 - text: the translation, short enough to fit in the original bubble. Prefer a natural, idiomatic line over a literal one.
-- textColor and bgColor: hex colours matching the original bubble, so the overlay does not look pasted on. Most manga bubbles are black on white, but sound effects and coloured panels are not.
 
 Return one entry for every bubble, numbered 1 to ${count}, even if a bubble is empty or unreadable. For those, use an empty string for text.`;
 }

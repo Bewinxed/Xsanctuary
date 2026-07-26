@@ -913,13 +913,130 @@ async function performOCR(imageUrl: string): Promise<OCRResult> {
  * returned indexes trustworthy, since the model is reading them off the image
  * rather than counting.
  */
+
+/**
+ * Reads the real colours out of a bubble instead of asking the model to guess.
+ *
+ * Comic bubbles are close to binary: ink on paper. Otsu's method finds the
+ * luminance threshold that best separates those two groups, which is far more
+ * reliable than a vision model estimating a hex value, costs nothing, and
+ * still works for sound effects on coloured panels where "black on white" is
+ * simply wrong.
+ */
+function sampleBubbleColors(
+  ctx: OffscreenCanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): { bgColor: string; textColor: string } | null {
+  // Inset so the bubble outline and whatever sits outside it are excluded
+  const inset = 0.14;
+  const sx = Math.round(x + w * inset);
+  const sy = Math.round(y + h * inset);
+  const sw = Math.max(1, Math.round(w * (1 - inset * 2)));
+  const sh = Math.max(1, Math.round(h * (1 - inset * 2)));
+
+  let data: Uint8ClampedArray;
+  try {
+    data = ctx.getImageData(sx, sy, sw, sh).data;
+  } catch {
+    return null;
+  }
+
+  const histogram = new Array(256).fill(0);
+  const sums = { r: new Array(256).fill(0), g: new Array(256).fill(0), b: new Array(256).fill(0) };
+  let total = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue; // ignore transparent pixels
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    // Rec. 601 luma, which tracks perceived brightness better than a mean
+    const lum = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    histogram[lum]++;
+    sums.r[lum] += r;
+    sums.g[lum] += g;
+    sums.b[lum] += b;
+    total++;
+  }
+
+  if (total < 32) return null;
+
+  // Otsu: pick the threshold maximising between-class variance
+  let sumAll = 0;
+  for (let t = 0; t < 256; t++) sumAll += t * histogram[t];
+
+  let sumBack = 0;
+  let weightBack = 0;
+  let best = { variance: -1, threshold: 128 };
+
+  for (let t = 0; t < 256; t++) {
+    weightBack += histogram[t];
+    if (weightBack === 0) continue;
+    const weightFore = total - weightBack;
+    if (weightFore === 0) break;
+
+    sumBack += t * histogram[t];
+    const meanBack = sumBack / weightBack;
+    const meanFore = (sumAll - sumBack) / weightFore;
+    const variance = weightBack * weightFore * (meanBack - meanFore) ** 2;
+
+    if (variance > best.variance) best = { variance, threshold: t };
+  }
+
+  const average = (from: number, to: number) => {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let n = 0;
+    for (let t = from; t <= to; t++) {
+      r += sums.r[t];
+      g += sums.g[t];
+      b += sums.b[t];
+      n += histogram[t];
+    }
+    if (n === 0) return null;
+    return [Math.round(r / n), Math.round(g / n), Math.round(b / n)] as const;
+  };
+
+  const dark = average(0, best.threshold);
+  const light = average(best.threshold + 1, 255);
+  if (!dark || !light) return null;
+
+  let darkCount = 0;
+  for (let t = 0; t <= best.threshold; t++) darkCount += histogram[t];
+
+  // Whichever group covers more of the bubble is the fill; the other is the ink
+  const bg = darkCount > total / 2 ? dark : light;
+  const fg = darkCount > total / 2 ? light : dark;
+
+  const hex = (c: readonly [number, number, number]) =>
+    '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');
+
+  // Too little separation means this was not a bubble, or it is a flat patch.
+  // Guessing a text colour there would look worse than declining.
+  const contrast = Math.abs(
+    0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2] -
+    (0.299 * fg[0] + 0.587 * fg[1] + 0.114 * fg[2])
+  );
+  if (contrast < 40) return null;
+
+  return { bgColor: hex(bg), textColor: hex(fg) };
+}
+
 async function composeBubbleSheet(
   imageUrl: string,
   bubbles: BubbleDetection[],
   padding: number,
   originalWidth?: number,
   originalHeight?: number
-): Promise<{ base64: string; count: number }> {
+): Promise<{
+  base64: string;
+  count: number;
+  colors: Array<{ bgColor: string; textColor: string } | null>;
+}> {
   const response = await fetch(imageUrl);
   if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`);
   const imageBitmap = await createImageBitmap(await response.blob());
@@ -964,9 +1081,15 @@ async function composeBubbleSheet(
   ctx.fillStyle = '#F2F2F2';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  const colors: Array<{ bgColor: string; textColor: string } | null> = [];
+
   let y = GAP;
   placed.forEach((c, i) => {
     ctx.drawImage(imageBitmap, c.x1, c.y1, c.w, c.h, GUTTER, y, c.dw, c.dh);
+
+    // Sample from what was just drawn, so the numbers and separators added
+    // below are never included in the reading.
+    colors.push(sampleBubbleColors(ctx, GUTTER, y, c.dw, c.dh));
 
     // Separator so adjacent bubbles do not read as one image
     ctx.strokeStyle = '#B0B0B0';
@@ -990,7 +1113,7 @@ async function composeBubbleSheet(
     reader.readAsDataURL(blob);
   });
 
-  return { base64, count: bubbles.length };
+  return { base64, count: bubbles.length, colors };
 }
 
 // ============================================================================
