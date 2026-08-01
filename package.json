@@ -2,7 +2,7 @@
   "name": "xsanctuary",
   "description": "Show country flags for Twitter/X users based on their location",
   "private": true,
-  "version": "3.3.0",
+  "version": "3.4.0",
   "type": "module",
   "author": {
     "name": "Omar Al Matar",
